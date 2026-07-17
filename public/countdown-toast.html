@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Countdown</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #181A22; color: #fff;
+    font-family: "Inter","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    width: 300px; min-height: 96px;
+    border-radius: 12px; overflow: hidden;
+    cursor: pointer; user-select: none;
+  }
+  .inner { padding: 16px; }
+  .text { font-size: 13px; line-height: 1.5; }
+  .bar { height: 4px; border-radius: 9999px; background: rgba(255,255,255,0.15); margin-top: 10px; overflow: hidden; }
+  .fill { height: 100%; background: #C9E33E; width: 100%; transition: width 1s linear; }
+</style>
+</head>
+<body>
+<div class="inner">
+  <div class="text" id="msg"></div>
+  <div class="bar"><div class="fill" id="fill"></div></div>
+</div>
+<!-- 外部经典脚本：CSP 为 script-src 'self'，内联脚本会被拦截，故抽成独立文件 -->
+<script src="countdown-toast.js"></script>
+</body>
+</html>

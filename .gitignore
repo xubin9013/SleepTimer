@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+src-tauri/target/
+
+# Tauri 自动生成
+src-tauri/gen/schemas/
+
+# 安装包与 NSIS 工具链（安装脚本源码为 installer.nsi）
+SleepTimer-Setup.exe
+nsis-tools/
+nsis-tool.nupkg
+
+# 运行时数据
+log/
+config/
+
+# 误建文件 / 日志
+nul
+*.log
+
+# OS / 编辑器
+.DS_Store
+Thumbs.db

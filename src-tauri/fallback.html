@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SleepTimer - 加载异常</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: #0f1118; color: #e5e7eb; height: 100vh;
+    display: flex; flex-direction: column; overflow: hidden;
+    user-select: none;
+  }
+  .titlebar {
+    height: 40px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 12px; background: #181a22; border-bottom: 1px solid #2a2e3b;
+    flex-shrink: 0; -webkit-app-region: drag;
+  }
+  .titlebar .app-name { font-size: 14px; font-weight: 600; color: #f9fafb; }
+  .titlebar .controls { display: flex; gap: 4px; -webkit-app-region: no-drag; }
+  .titlebar .ctrl-btn {
+    width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent;
+    color: #9ca3af; font-size: 16px; cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
+  }
+  .titlebar .ctrl-btn:hover { background: rgba(255,255,255,0.08); }
+  .titlebar .ctrl-btn.close:hover { background: #e11d48; color: #fff; }
+
+  .body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; text-align: center; }
+  .body .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+  .body h1 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+  .body p { font-size: 13px; color: #9ca3af; max-width: 360px; line-height: 1.6; margin-bottom: 20px; }
+  .body a { color: #7a6bef; text-decoration: none; }
+  .body .ver { position: fixed; bottom: 12px; right: 16px; font-size: 11px; color: #4b5563; }
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <span class="app-name">SleepTimer v{{VERSION}}</span>
+  <div class="controls">
+    <button class="ctrl-btn" id="btn-min" title="最小化">&#x2012;</button>
+    <button class="ctrl-btn close" id="btn-close" title="关闭">&#x2715;</button>
+  </div>
+</div>
+
+<div class="body">
+  <div class="icon">☁️</div>
+  <h1>界面加载异常</h1>
+  <p>前端资源未能正确加载（可能安装不完整或文件损坏）。<br>请尝试重新安装 SleepTimer。</p>
+</div>
+
+<div class="ver">v{{VERSION}}</div>
+
+<script>
+const { getCurrentWindow } = window.__TAURI__.window;
+const win = getCurrentWindow();
+
+document.getElementById('btn-close').addEventListener('click', () => win.close());
+document.getElementById('btn-min').addEventListener('click', () => win.minimize());
+
+// 双击标题栏也关闭
+document.querySelector('.titlebar').addEventListener('dblclick', (e) => {
+  if (e.target.closest('.ctrl-btn')) return;
+  win.close();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SleepTimer 倒计时</title>
+    <style>
+      :root {
+        --bg: #15171e;
+        --card-bg: rgba(17, 24, 39, 0.92);
+        --card-color: #ffffff;
+        --card-border: rgba(255, 255, 255, 0.08);
+        --bar-bg: rgba(255, 255, 255, 0.12);
+        --title-color: rgba(255, 255, 255, 0.72);
+        --bar-fill: linear-gradient(90deg, #8b7ff0, #6b5dd3);
+      }
+      html[data-theme="light"] {
+        --bg: #f3f4f6;
+        --card-bg: #ffffff;
+        --card-color: #111827;
+        --card-border: rgba(0, 0, 0, 0.08);
+        --bar-bg: rgba(0, 0, 0, 0.1);
+        --title-color: rgba(0, 0, 0, 0.55);
+        --bar-fill: linear-gradient(90deg, #8b7ff0, #6b5dd3);
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        background: var(--bg);
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #cd-root {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        cursor: pointer;
+        user-select: none;
+      }
+      #cd-card {
+        width: 300px;
+        padding: 16px 18px;
+        border-radius: 14px;
+        background: var(--card-bg);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        color: var(--card-color);
+        box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
+        border: 1px solid var(--card-border);
+        animation: cd-pop 160ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      #cd-title {
+        font-size: 12px;
+        color: var(--title-color);
+        margin-bottom: 6px;
+        letter-spacing: 0.3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #cd-time {
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+      #cd-num { font-size: 30px; font-weight: 700; }
+      #cd-time small { font-size: 12px; font-weight: 400; opacity: 0.7; }
+      #cd-bar {
+        margin-top: 10px;
+        height: 4px;
+        background: var(--bar-bg);
+        border-radius: 99px;
+        overflow: hidden;
+      }
+      #cd-bar > i {
+        display: block;
+        height: 100%;
+        width: 100%;
+        background: var(--bar-fill);
+        transition: width 1s linear;
+      }
+      @keyframes cd-pop {
+        from { transform: scale(0.92); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cd-root">
+      <div id="cd-card">
+        <div id="cd-title"></div>
+        <div id="cd-time"><span id="cd-num">--</span><small>秒后熄屏</small></div>
+        <div id="cd-bar"><i></i></div>
+      </div>
+    </div>
+    <script type="module" src="/src/countdown-page.ts"></script>
+  </body>
+</html>
