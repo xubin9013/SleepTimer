@@ -331,10 +331,15 @@ async function checkUpdate() {
     openModal({ title, desc, body, actions, sm: true, closeOnOverlay: true });
   } catch (e) {
     const msg = String((e as any)?.message || e);
+    // 脱敏：不向用户展示原始 URL / 内部错误细节
+    const clean = msg
+      .replace(/https?:\/\/[^\s]+/g, "<GitHub API>")
+      .replace(/error sending request for url/gi, "连接失败")
+      .replace(/error trying to connect/gi, "无法建立连接");
     openModal({
       type: "alert",
       title: "检查更新失败",
-      desc: msg + "<br>请确认网络畅通，或前往 <b>GitHub Releases</b> 手动查看。",
+      desc: clean + "<br>请确认网络畅通（如使用代理请确保已开启），或前往 <b>GitHub Releases</b> 手动查看。",
       actions: [
         {
           label: "前往查看", cls: "btn-primary",

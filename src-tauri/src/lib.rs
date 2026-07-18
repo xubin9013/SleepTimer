@@ -330,6 +330,7 @@ async fn check_update() -> Result<serde_json::Value, String> {
     const API: &str = "https://api.github.com/repos/xubin9013/SleepTimer/releases/latest";
     let client = reqwest::Client::builder()
         .user_agent("SleepTimer")
+        .timeout(std::time::Duration::from_secs(12))
         .build()
         .map_err(|e| format!("创建请求客户端失败: {}", e))?;
     let resp = client
@@ -337,7 +338,12 @@ async fn check_update() -> Result<serde_json::Value, String> {
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
-        .map_err(|e| format!("请求 GitHub 失败（请检查网络）: {}", e))?;
+        .map_err(|e| {
+            // 清理原始错误中的 URL 等冗余信息，避免暴露给用户
+            let raw = e.to_string();
+            let clean = raw.replace(API, "<GitHub API>").replace("url:", "");
+            format!("网络请求失败（请检查网络/代理设置）: {}", clean)
+        })?;
     if !resp.status().is_success() {
         // 404 表示仓库暂无“最新发布”（可能只有草稿/标签，未正式发布）
         return Err(format!(
