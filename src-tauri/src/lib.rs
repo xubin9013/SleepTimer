@@ -20,6 +20,9 @@ pub struct AppState {
     // 当前待执行/进行中的倒计时参数（弹窗池窗口的运行时状态）。
     // 用于事件可能错过时的兜底拉取，避免"弹窗不显示倒计时"。
     pub pending_countdown: Mutex<Option<serde_json::Value>>,
+    // 倒计时序号（单调递增）：每次新建倒计时自增，使旧的计时线程在醒来时能识别
+    // "已非当前倒计时"而放弃触发熄屏，避免取消/重设后旧定时器误触发。
+    pub countdown_seq: Mutex<u64>,
 }
 
 /// 启动一个后台线程专责写日志（行业规范格式：日期文件名 + 级别 + 组件标签）。
@@ -213,6 +216,14 @@ fn create_countdown_window(
     ));
 
     // 保存待执行参数到状态（供弹窗页面就绪后兜底拉取，避免事件错过导致不显示倒计时）
+    // ★ 每次新建倒计时递增序号，写入参数，使旧的计时线程醒来时能识别"已非当前倒计时"。
+    let seq = {
+        let mut s = state.countdown_seq.lock().unwrap();
+        *s += 1;
+        *s
+    };
+    let mut params = params;
+    params["id"] = serde_json::json!(seq);
     *state.pending_countdown.lock().unwrap() = Some(params.clone());
 
     // 获取或创建弹窗池
@@ -230,6 +241,53 @@ fn create_countdown_window(
     }
 
     app.emit("cd:show", &params).map_err(|e| format!("emit failed: {}", e))?;
+
+    // ★ 倒计时归零触发熄屏的权威逻辑放在 Rust 端（后台线程），而非前端弹窗定时器。
+    //   原因：全局 ESC 钩子在取消时会先隐藏弹窗窗口，导致 cd:cancel 事件可能来不及送达
+    //   已隐藏的 WebView，前端定时器的归零回调仍会触发 trigger_screenoff（"弹窗消失但熄屏照常"）。
+    //   改为 Rust 计时：归零时先校验 pending_countdown 是否仍为本次倒计时（且 seq 一致），
+    //   仅在未被取消时才调用 screen_off；ESC 钩子清掉 pending 后，旧线程醒来直接放弃，绝不会误触发。
+    {
+        let app2 = app.clone();
+        let seconds2 = seconds;
+        let lock2 = lock;
+        let trigger2 = trigger.clone();
+        let seq2 = seq;
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_secs(seconds2 as u64));
+            // 醒来后校验：仍待执行且序号一致，才视为"未被取消/重设"
+            let valid = {
+                let st = app2.state::<AppState>();
+                // 先 clone 出值再判断，避免 MutexGuard 借用 State 跨语句导致生命周期报错
+                let p = st.pending_countdown.lock().unwrap().clone();
+                match p.as_ref() {
+                    Some(v) => v.get("id").and_then(|x| x.as_u64()) == Some(seq2),
+                    None => false,
+                }
+            };
+            if !valid {
+                return; // 已被取消或已被新倒计时取代 → 不触发熄屏
+            }
+            // ★ 真正熄屏（与 trigger_screenoff 命令同逻辑），在后台线程直接调用 platform::screen_off
+            let off_tx = app2.state::<AppState>().off_log.clone();
+            let dbg_tx = app2.state::<AppState>().debug_log.clone();
+            let _ = platform::screen_off(lock2);
+            let ts = chrono::Local::now()
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string();
+            let _ = off_tx.send(
+                serde_json::json!({"time":ts,"trigger":trigger2.clone(),"reason":reason_cn(&trigger2),"lock":lock2})
+                    .to_string(),
+            );
+            let _ = dbg_tx.send(fmt_log("INFO", "screenoff", &format!("screen off triggered by {}", trigger2)));
+            // 清状态 + 隐藏弹窗 + 通知弹窗页收尾
+            *app2.state::<AppState>().pending_countdown.lock().unwrap() = None;
+            if let Some(win) = app2.get_webview_window("countdown-pool") {
+                let _ = win.hide();
+            }
+            let _ = app2.emit("cd:finished", &serde_json::json!({}));
+        });
+    }
 
     Ok(())
 }
@@ -289,6 +347,7 @@ pub fn run() {
         off_log: off_tx,
         debug_log: debug_tx,
         pending_countdown: Mutex::new(None),
+        countdown_seq: Mutex::new(0),
     };
 
     let app = tauri::Builder::default()

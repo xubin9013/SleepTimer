@@ -32,6 +32,7 @@ let lock = false;
 let trigger = "";
 let timerId = 0; // setInterval 返回值
 let running = false; // 是否已启动，避免重复触发
+let ended = false;   // 是否已取消/结束（用于拦截兜底轮询重复启动显示）
 
 function render() {
   if (numEl) numEl.textContent = String(Math.max(0, left));
@@ -59,28 +60,32 @@ async function hideSelf() {
   if (barEl) barEl.style.width = "0%";
 }
 
-/** 归零 → 隐藏窗口 + 清除状态 + 触发熄屏 */
+/** 本地倒计时归零：仅收起 UI，不触发熄屏。
+ *  ★ 熄屏由 Rust 端计时线程权威触发（见 create_countdown_window）。
+ *    此处绝不可调用 cancel_countdown 清空 pending，否则会在 Rust 归零前抢清状态，
+ *    导致 Rust 计时线程校验失败而跳过熄屏。真正的熄屏与 pending 清理由 Rust 归零时统一完成。 */
 async function finish() {
   if (!running) return;
   running = false;
+  ended = true;
   clearInterval(timerId);
   timerId = 0;
   await hideSelf();
-  invoke("cancel_countdown").catch(() => {});
-  invoke("trigger_screenoff", { lock, trigger }).catch(() => {});
 }
 
-/** 用户取消 */
+/** 用户取消（点击/ESC） */
 async function cancel() {
-  if (!running && left === 0) {
-    // 尚未启动（理论上不会到这里），直接隐藏
+  if (!running && left === 0 && ended) {
+    // 已经结束，仅确保收起
     await hideSelf();
     return;
   }
   running = false;
+  ended = true;
   clearInterval(timerId);
   timerId = 0;
   await hideSelf();
+  // 清空 Rust 端 pending；Rust 计时线程醒来时会因 pending 为 None 而放弃熄屏
   invoke("cancel_countdown").catch(() => {});
 }
 
@@ -105,6 +110,7 @@ function start(p: CdParams) {
 
   clearInterval(timerId);
   running = true;
+  ended = false;
   render();
   timerId = window.setInterval(() => {
     left -= 1;
@@ -136,11 +142,17 @@ listen("cd:cancel", () => {
   cancel();
 }).catch(() => {});
 
+// ★ Rust 端计时线程归零触发熄屏后发出此事件，通知弹窗页收尾隐藏。
+//   （弹窗本地定时器归零也会自行收起，此处为 Rust 权威路径的兜底收尾。）
+listen("cd:finished", () => {
+  cancel();
+}).catch(() => {});
+
 // ★ 兜底轮询：弹窗可见时每 150ms 主动拉取待执行倒计时。
 // 持久池窗口只加载一次，cd:show 理论上总能收到；但即便某次事件被错过，
 // 轮询也能保证倒计时一定会启动（仅在可见时轮询，隐藏时不空耗 IPC）。
 window.setInterval(async () => {
-  if (running) return;
+  if (running || ended) return;
   let visible = true;
   try {
     visible = await getCurrentWindow().isVisible();
