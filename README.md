@@ -111,8 +111,9 @@ SleepTimer/
 
 ### 6. 系统托盘 / 单实例 / 开机自启
 - 托盘：`build_tray` 创建仅右键菜单（退出）的托盘图标，左键点击显示并聚焦主窗口。
-- 单实例：`tauri_plugin_single_instance` 保证重复启动时聚焦已开窗口而非多开。
-- 自启：`platform::set_autostart` 写入/删除注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SleepTimer`；安装时若用户在安装器勾选，注册表状态会在 `setup` 阶段与配置同步。
+- 单实例：`tauri_plugin_single_instance` 保证重复启动时聚焦已开窗口而非多开；若重复启动携带 `--silent` 则保持隐藏、不抢焦点。
+- 自启：`platform::set_autostart` 写入/删除注册表 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SleepTimer`，**注册值附带 `--silent` 参数**，即开机自启时不显示主界面、仅驻留托盘；安装时若用户在安装器勾选，注册表状态会在 `setup` 阶段与配置同步。
+- **静默启动逻辑**：主窗口在 `tauri.conf.json` 中默认 `visible: false`；`run()` 的 `setup` 阶段解析命令行，仅当**未带 `--silent`**（即用户双击/手动启动）时才 `show()` 主窗口，带 `--silent` 则仅驻留托盘、不显示界面。
 
 ### 7. 配置与日志持久化
 配置存于 `<exe>/config/app.json`（`models.rs`，不可写时回退 `%LOCALAPPDATA%\SleepTimer\config`）。日志分两类：调试日志 `sleeptimer-*.log`（后台线程、按日轮转、30 天清理，`logger.rs`）与熄屏事件日志 `screenoff-*.log`（JSON Lines，中文原因「手动/定时/循环」，`models.rs`）。

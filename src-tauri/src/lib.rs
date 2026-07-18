@@ -265,6 +265,12 @@ fn close_countdown_windows(app: tauri::AppHandle, state: tauri::State<AppState>)
     }
 }
 
+/// 是否以静默模式启动（开机自启场景）。
+/// 带 `--silent` / `-silent` 参数时不显示主窗口，仅驻留系统托盘。
+fn is_silent_launch() -> bool {
+    std::env::args().any(|a| a == "--silent" || a == "-silent")
+}
+
 pub fn run() {
     let mut config = models::load_config();
     let log_dir = models::effective_log_dir();
@@ -287,11 +293,16 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .menu(|handle| Ok(Menu::with_items(handle, &[])?)) // ★ 空菜单：隐藏默认菜单栏
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
-                let _ = w.unminimize();
-                let _ = w.set_focus();
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // ★ 仅当新实例非静默（如用户双击启动）时才弹出主窗口；
+            //   若新实例也带 --silent（如再次开机自启），则保持隐藏、不抢焦点。
+            let silent = argv.iter().any(|a| a == "--silent" || a == "-silent");
+            if !silent {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.unminimize();
+                    let _ = w.set_focus();
+                }
             }
         }))
         .plugin(tauri_plugin_dialog::init())
@@ -354,8 +365,16 @@ pub fn run() {
                     *app.state::<AppState>().config.lock().unwrap() = cfg.clone();
                     let _ = models::save_config(&cfg);
                 }
-                // Apply autostart to registry (idempotent)
+                // Apply autostart to registry (idempotent) — 始终写入带 --silent 的命令行
                 let _ = platform::set_autostart(cfg.settings.autostart);
+            }
+            // ★ 静默启动：仅当未带 --silent 参数时才显示主窗口；
+            //   带 --silent（如开机自启）则仅驻留系统托盘，不显示界面。
+            if !is_silent_launch() {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
             }
             Ok(())
         })

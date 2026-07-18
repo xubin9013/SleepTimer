@@ -22,6 +22,7 @@
         "decorations": false,
         "resizable": true,
         "center": true,
+        "visible": false,
         "theme": null
       }
     ],

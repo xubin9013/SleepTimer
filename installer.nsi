@@ -213,7 +213,8 @@ Section "Install"
     CreateShortcut "$DESKTOP\SleepTimer.lnk" "$INSTDIR\SleepTimer.exe"
   ${EndIf}
   ${If} $autoStart == 1
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SleepTimer" "$INSTDIR\SleepTimer.exe"
+    ; ★ 开机静默启动：附带 --silent 参数，仅驻留托盘、不显示主界面
+    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SleepTimer" '"$INSTDIR\SleepTimer.exe" --silent'
   ${EndIf}
 
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SleepTimer" "DisplayName" "SleepTimer"

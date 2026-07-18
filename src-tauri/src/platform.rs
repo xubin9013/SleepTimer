@@ -56,7 +56,9 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
         .to_string_lossy()
         .to_string();
     if enabled {
-        key.set_value("SleepTimer", &exe).map_err(|e| e.to_string())?;
+        // ★ 开机静默启动：注册时附带 --silent 参数，使主窗口不显示、仅驻留托盘
+        let cmd = format!("\"{}\" --silent", exe);
+        key.set_value("SleepTimer", &cmd).map_err(|e| e.to_string())?;
     } else {
         let _ = key.delete_value("SleepTimer");
     }
