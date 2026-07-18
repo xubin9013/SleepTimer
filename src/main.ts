@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { store, loadConfig, saveConfig, getCurrentPlan, getEffectivePlanName } from "./store";
-import { el, svgIcon, closeModal, modalOpen, toast } from "./ui";
+import { el, svgIcon, closeModal, modalOpen, toast, openModal } from "./ui";
 import { showCountdown, cancelCountdown, isCountdownActive } from "./countdown";
 import { installDiagnostics } from "./diag";
 import { renderPlans } from "./modules/plans";
@@ -30,6 +30,10 @@ function buildShell() {
   const name = el("span", { class: "app-name", text: "SleepTimer" });
   const version = el("span", { class: "app-version", text: store.cfg.version });
   versionEl = version;
+  // ★ 点击版本号检测更新（更新源：GitHub Releases）
+  versionEl.style.cursor = "pointer";
+  versionEl.title = "点击检查更新";
+  versionEl.addEventListener("click", () => checkUpdate());
   const left = el("div", { class: "drag", style: "display:flex;align-items:center;gap:8px", "data-tauri-drag-region": "" }, appIcon, name, version);
   const spacer = el("div", { class: "drag", "data-tauri-drag-region": "" });
 
@@ -253,5 +257,100 @@ async function buildMainApp() {
   api.logDebug("[app] 前端已加载，主界面就绪");
 }
 
+
+/** 点击版本号 → 检测 GitHub 最新发布，比对版本并引导前往下载。 */
+async function checkUpdate() {
+  const current = (window as any).__APP_VERSION__ || store.cfg.version || "";
+  if (!versionEl) return;
+  const restore = () => { if (versionEl) versionEl.textContent = current; };
+  versionEl.textContent = "检查中…";
+  versionEl.style.pointerEvents = "none";
+  try {
+    const data = await api.checkUpdate();
+    const tag: string = data?.tag_name || "";
+    const htmlUrl: string =
+      data?.html_url || "https://github.com/xubin9013/SleepTimer/releases";
+    const notes: string = data?.body || "";
+    const published: string = data?.published_at
+      ? String(data.published_at).slice(0, 10)
+      : "";
+    // 规范化：小写、去前导 v，使 V1.0.x / v1.0.x 可比较
+    const norm = (v: string) => String(v || "").trim().toLowerCase().replace(/^v/, "");
+    const nCur = norm(current);
+    const nLat = norm(tag);
+    let status: "update" | "uptodate" | "newer";
+    if (!tag || nLat === nCur) status = "uptodate";
+    else if (nLat > nCur) status = "update";
+    else status = "newer";
+
+    const body = el("div", { class: "update-body" });
+    const info = el("div", { class: "update-info" });
+    info.append(
+      el("div", { class: "update-row" },
+        el("span", { class: "k", text: "当前版本" }),
+        el("span", { class: "v", text: current })
+      )
+    );
+    if (tag) {
+      info.append(
+        el("div", { class: "update-row" },
+          el("span", { class: "k", text: "最新版本" }),
+          el("span", { class: "v", text: tag + (published ? `  (${published})` : "") })
+        )
+      );
+    }
+    body.append(info);
+    if (notes) {
+      body.append(el("pre", { class: "update-notes", text: notes.trim().slice(0, 800) }));
+    }
+
+    const actions: { label: string; cls?: string; onClick: () => void }[] = [];
+    if (status === "update") {
+      actions.push({
+        label: "前往下载", cls: "btn-primary",
+        onClick: () => {
+          closeModal();
+          api.openUrl(htmlUrl).catch(() => toast("无法打开链接", "error"));
+        },
+      });
+    }
+    actions.push({ label: "关闭", cls: "btn-secondary", onClick: () => closeModal() });
+
+    let title: string;
+    let desc: string;
+    if (status === "update") {
+      title = "发现新版本";
+      desc = "已检测到 GitHub 上的新版本，建议前往下载更新。";
+    } else if (status === "newer") {
+      title = "已是最新";
+      desc = "本地版本高于 GitHub 最新发布标签，可能尚未正式发布。";
+    } else {
+      title = "已是最新版本";
+      desc = "你当前使用的已经是最新版本。";
+    }
+    openModal({ title, desc, body, actions, sm: true, closeOnOverlay: true });
+  } catch (e) {
+    const msg = String((e as any)?.message || e);
+    openModal({
+      type: "alert",
+      title: "检查更新失败",
+      desc: msg + "<br>请确认网络畅通，或前往 <b>GitHub Releases</b> 手动查看。",
+      actions: [
+        {
+          label: "前往查看", cls: "btn-primary",
+          onClick: () => {
+            closeModal();
+            api.openUrl("https://github.com/xubin9013/SleepTimer/releases").catch(() => {});
+          },
+        },
+        { label: "关闭", cls: "btn-secondary", onClick: () => closeModal() },
+      ],
+      closeOnOverlay: true,
+    });
+  } finally {
+    versionEl.style.pointerEvents = "";
+    restore();
+  }
+}
 
 init();

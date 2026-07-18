@@ -56,6 +56,10 @@ export const api = {
   cancelCountdown: () => invoke("cancel_countdown"),
   /** 拉取当前待执行的倒计时参数（弹窗页面兜底启动用） */
   getCountdownState: () => invoke<any | null>("get_countdown_state"),
+  /** 检测更新：向 GitHub Releases 最新发布接口请求，返回发布信息 JSON */
+  checkUpdate: () => invoke<any>("check_update"),
+  /** 在系统默认浏览器打开外部链接（前往下载等） */
+  openUrl: (url: string) => invoke("open_url", { url }),
 };
 
 export interface LogRow {

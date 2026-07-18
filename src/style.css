@@ -155,7 +155,8 @@ button { font-family: inherit; }
 .titlebar .drag { flex: 1; height: 100%; }
 .titlebar .app-icon { width: 32px; height: 32px; border-radius: var(--radius-sm); }
 .titlebar .app-name { font-size: var(--text-lg); font-weight: 600; color: var(--gray-900); }
-.titlebar .app-version { font-size: var(--text-xs); color: var(--gray-400); margin-left: 2px; }
+.titlebar .app-version { font-size: var(--text-xs); color: var(--gray-400); margin-left: 2px; cursor: pointer; transition: color 120ms ease; }
+.titlebar .app-version:hover { color: var(--primary-500); text-decoration: underline dotted; }
 .titlebar .spacer { flex: 1; }
 
 .pill {
@@ -471,6 +472,20 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   display: flex; align-items: center; justify-content: center; margin: 0 auto var(--space-3);
 }
 .modal .alert-icon svg { width: 24px; height: 24px; }
+
+/* 更新检测弹窗内容 */
+.update-body { margin: 4px 0 var(--space-4); }
+.update-info { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--text-sm); }
+.update-row .k { color: var(--gray-500); }
+.update-row .v { color: var(--gray-900); font-weight: 600; font-variant-numeric: tabular-nums; }
+.update-notes {
+  max-height: 220px; overflow: auto; margin: 0; padding: 10px 12px;
+  background: var(--bg-subtle, #f5f6f8); border: 1px solid var(--border-color, rgba(0,0,0,0.08));
+  border-radius: var(--radius-sm, 8px); color: var(--gray-600);
+  font-size: var(--text-xs); line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+}
+[data-theme="dark"] .update-notes { background: rgba(255,255,255,0.04); color: var(--gray-300); }
 .modal .danger-name { color: var(--danger-500); font-size: var(--text-sm); text-align: center; font-weight: 500; }
 
 /* ---------- Pickers ---------- */

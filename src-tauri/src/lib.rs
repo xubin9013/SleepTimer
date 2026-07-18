@@ -323,6 +323,65 @@ fn close_countdown_windows(app: tauri::AppHandle, state: tauri::State<AppState>)
     }
 }
 
+/// 检测更新：向 GitHub Releases "最新发布" 接口发起只读 GET，返回发布信息。
+/// 不下载安装，仅由前端比对版本并引导用户前往发布页。更新源即 GitHub 仓库。
+#[tauri::command]
+async fn check_update() -> Result<serde_json::Value, String> {
+    const API: &str = "https://api.github.com/repos/xubin9013/SleepTimer/releases/latest";
+    let client = reqwest::Client::builder()
+        .user_agent("SleepTimer")
+        .build()
+        .map_err(|e| format!("创建请求客户端失败: {}", e))?;
+    let resp = client
+        .get(API)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|e| format!("请求 GitHub 失败（请检查网络）: {}", e))?;
+    if !resp.status().is_success() {
+        // 404 表示仓库暂无“最新发布”（可能只有草稿/标签，未正式发布）
+        return Err(format!(
+            "GitHub 返回 {}，可能仓库尚未发布 Release",
+            resp.status()
+        ));
+    }
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("解析 GitHub 响应失败: {}", e))?;
+    Ok(json)
+}
+
+/// 在系统默认浏览器中打开外部链接（用于“前往下载”等），不依赖额外 Tauri 插件。
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if url.is_empty() {
+        return Err("链接为空".into());
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("打开链接失败: {}", e))?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("打开链接失败: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("打开链接失败: {}", e))?;
+    }
+    Ok(())
+}
+
 /// 是否以静默模式启动（开机自启场景）。
 /// 带 `--silent` / `-silent` 参数时不显示主窗口，仅驻留系统托盘。
 fn is_silent_launch() -> bool {
@@ -381,7 +440,9 @@ pub fn run() {
             create_countdown_window,
             cancel_countdown,
             get_countdown_state,
-            close_countdown_windows
+            close_countdown_windows,
+            check_update,
+            open_url
         ])
         .setup(|app| {
             // startup record（异步发送，绝不阻塞启动）
