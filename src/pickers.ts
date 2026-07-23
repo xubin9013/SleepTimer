@@ -197,8 +197,10 @@ export function openDatePicker(initial: string | null): Promise<string | null> {
       });
       const left = el("button", { class: "cal-nav", html: iconEl("chevron-left").outerHTML, onclick: () => { vm--; if (vm < 0) { vm = 11; vy--; } render(); } });
       const right = el("button", { class: "cal-nav", html: iconEl("chevron-right").outerHTML, onclick: () => { vm++; if (vm > 11) { vm = 0; vy++; } render(); } });
-      const isCurrentMonth = vy === today.getFullYear() && vm === today.getMonth();
-      const todayBtn = el("button", { class: "cal-nav cal-nav-auto" + (isCurrentMonth ? " cal-nav-disabled" : ""), text: "今天", onclick: () => { vy = today.getFullYear(); vm = today.getMonth(); selected = `${vy}-${pad(vm + 1)}-${pad(today.getDate())}`; render(); } });
+      // ★ 禁用态跟随「选中的日期是否为今天」：选中今天则禁用(点此按钮无意义)，否则可点(一键跳到今天)
+      const todayStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+      const isTodaySelected = selected === todayStr;
+      const todayBtn = el("button", { class: "cal-nav cal-nav-auto" + (isTodaySelected ? " cal-nav-disabled" : ""), text: "今天", disabled: isTodaySelected ? "true" : null, onclick: () => { vy = today.getFullYear(); vm = today.getMonth(); selected = `${vy}-${pad(vm + 1)}-${pad(today.getDate())}`; render(); } });
       // 布局：<  MM月  >  年份  今天
       head.append(left, el("span", { text: `${pad(vm + 1)}月`, style: "font-size:var(--text-base);font-weight:600;color:var(--gray-900);min-width:48px;text-align:center" }), right, ysel, todayBtn);
 
@@ -262,8 +264,10 @@ export function openMonthPicker(initial: string | null): Promise<string | null> 
         vy = y;
         render();
       });
-      const isCurrentYear = vy === today.getFullYear();
-      const curBtn = el("button", { class: "cal-nav cal-nav-auto" + (isCurrentYear ? " cal-nav-disabled" : ""), text: "本月", onclick: () => { vy = today.getFullYear(); selected = `${vy}-${pad(today.getMonth() + 1)}`; render(); } });
+      // ★ 禁用态跟随「选中的月份是否为本月」：选中本月则禁用(点此按钮无意义)，否则可点(一键跳到本月)
+      const thisMonthStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}`;
+      const isThisMonthSelected = selected === thisMonthStr;
+      const curBtn = el("button", { class: "cal-nav cal-nav-auto" + (isThisMonthSelected ? " cal-nav-disabled" : ""), text: "本月", disabled: isThisMonthSelected ? "true" : null, onclick: () => { vy = today.getFullYear(); selected = `${vy}-${pad(today.getMonth() + 1)}`; render(); } });
       head.append(ysel, curBtn);
 
       grid.innerHTML = "";
