@@ -4,7 +4,10 @@
 !include "WordFunc.nsh"
 
 Name "SleepTimer"
-OutFile "SleepTimer-Setup.exe"
+!ifndef INSTALLER_NAME
+  !define INSTALLER_NAME "SleepTimer-Setup.exe"
+!endif
+OutFile "${INSTALLER_NAME}"
 InstallDir "D:\Program Files\SleepTimer"
 RequestExecutionLevel admin
 ; ★ 默认走 GUI 向导；仅当带上 /S 参数（程序内"立即更新"自动安装）才静默安装
