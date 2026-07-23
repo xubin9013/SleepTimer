@@ -98,3 +98,36 @@ pub fn pick_folder(app: &tauri::AppHandle) -> Option<String> {
         Err(_) => None,
     }
 }
+
+// ── 命名互斥体（单实例检测）─────────────────────────────────────────────
+// SleepTimer 启动时创建全局命名互斥体 Global\SleepTimerInstance。
+// 安装器通过检查该互斥体是否存在来判定程序是否在运行（替代 tasklist|find，
+// 消除进程名匹配误报）。进程退出（含崩溃）时 OS 自动释放互斥体，不会残留。
+
+#[cfg(windows)]
+pub fn create_app_mutex() {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    let wide: Vec<u16> = OsStr::new("Global\\SleepTimerInstance")
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        // 与同文件 LockWorkStation 一致的 extern "system" 声明风格
+        extern "system" {
+            fn CreateMutexW(
+                lpMutexAttributes: *const std::ffi::c_void,
+                bInitialOwner: std::os::raw::c_int,
+                lpName: *const u16,
+            ) -> *mut std::ffi::c_void;
+        }
+        // bInitialOwner = FALSE(0)：不获取所有权，仅创建/打开命名互斥体
+        CreateMutexW(std::ptr::null(), 0, wide.as_ptr());
+        // 故意不 CloseHandle —— 进程退出时 OS 自动回收内核对象
+    }
+}
+
+#[cfg(not(windows))]
+pub fn create_app_mutex() {}

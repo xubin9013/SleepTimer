@@ -39,23 +39,21 @@ Function .onInit
   ${EndIf}
 FunctionEnd
 
-; ---- 检测 SleepTimer 是否在运行，结果写入 $R0 (1=运行中) ----
-; 方案：tasklist /FI 精确匹配映像名（避免子串误匹配其他进程），再经 find /I /C 统计行数。
-; nsExec::ExecToStack 先压 stdout 再压退出码，故首个 Pop 是退出码、第二个 Pop 是输出计数。
-; 仅当匹配到真正的 SleepTimer.exe 进程（计数>0）才判定为运行中。
+; ---- 检测 SleepTimer 是否在运行（基于命名互斥体，零误报）----
+; SleepTimer 启动时创建全局互斥体 Global\SleepTimerInstance。
+; 安装器通过 OpenMutexW 检查该互斥体是否存在：
+;   存在 → 程序正在运行（或上次异常退出但 OS 尚未回收，概率极低）
+;   不存在 → 程序未运行
+; 替代原 tasklist|find 方案，彻底消除进程名匹配误报。
+!define SYNCHRONIZE 0x00100000
 Function IsRunning
   StrCpy $R0 0
-  StrCpy $R9 ""  ; 命中进程的详细信息（含 PID），供弹窗展示让用户核对
-  nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq SleepTimer.exe" /NH | find /I /C "SleepTimer.exe"'
-  Pop $1  ; 退出码（find: 0=找到, 1=未找到）
-  Pop $2  ; stdout：匹配到的 SleepTimer.exe 进程行数（如 "0" 或 "1"）
-  ${If} $2 != "0"
+  StrCpy $R9 ""
+  System::Call 'kernel32::OpenMutexW(i ${SYNCHRONIZE}, b 0, t "Global\SleepTimerInstance") i.R9'
+  ${If} $R9 != 0
+    System::Call 'kernel32::CloseHandle(i $R9)'
     StrCpy $R0 1
-    ; 抓取实际进程信息（CSV 格式，第二列为 PID）用于提示
-    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq SleepTimer.exe" /NH /FO CSV'
-    Pop $3
-    Pop $4
-    StrCpy $R9 $4
+    StrCpy $R9 "(mutex confirmed)"
   ${EndIf}
 FunctionEnd
 
@@ -86,7 +84,7 @@ Function CheckRunningAtStart
     retry_run:
     IntOp $killRetryCount $killRetryCount + 1
     ; 三按钮：中止=退出 | 重试=再杀 | 忽略=强制继续(默认穿透)
-    MessageBox MB_ABORTRETRYIGNORE|MB_ICONEXCLAMATION "检测到 SleepTimer 正在运行：$\n$R9$\n$\n请在任务管理器「详细信息」中按上述 PID 核对（右键托盘图标可退出）。$\n$\n「中止」退出安装 / 「重试」再尝试结束进程 / 「忽略」强制继续安装。" IDABORT do_abort IDRETRY do_kill
+    MessageBox MB_ABORTRETRYIGNORE|MB_ICONEXCLAMATION "检测到 SleepTimer 正在运行（互斥体确认）。$\n$\n「中止」退出安装 / 「重试」再尝试结束进程 / 「忽略」强制继续安装。" IDABORT do_abort IDRETRY do_kill
     ; ★ IDIGNORE（忽略）→ 穿透到此行：用户选择强制继续，最后尝试杀一次但不阻塞
     Goto do_force
     do_kill:

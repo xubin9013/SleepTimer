@@ -548,6 +548,8 @@ pub fn run() {
                     .debug_log
                     .send(fmt_log("INFO", "app", &format!("application started, version={}", models::build_version())));
             }
+            // ★ 创建全局命名互斥体，供安装器可靠检测程序是否在运行（替代 tasklist|find，消除误报）
+            platform::create_app_mutex();
             build_tray(app)?;
             // ★ 预创建倒计时弹窗池（隐藏窗口），消除每次新建窗口的 WebView2 启动延迟（~1s空白）。
             //   窗口加载轻量 countdown.html，首次显示时通过 Tauri 事件接收运行时参数（含当前主题），
