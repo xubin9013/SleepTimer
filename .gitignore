@@ -7,6 +7,7 @@ src-tauri/target/
 
 # Tauri 自动生成
 src-tauri/gen/schemas/
+src-tauri/src/generated_version.rs
 
 # 安装包与 NSIS 工具链（安装脚本源码为 installer.nsi）
 SleepTimer-Setup.exe
