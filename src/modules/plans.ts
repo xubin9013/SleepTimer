@@ -5,7 +5,7 @@ import { api } from "../api";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-// 「查看的方案」与当前执行方案（cfg.current_plan）解耦，持久化到 cfg.view_plan，
+// 「查看的方案」与当前执行方案（cfg.fixed_plan）解耦，持久化到 cfg.view_plan，
 // 退出重开后仍记得上次查看的是哪个方案标签（胶囊）。
 
 export function renderPlans(container: HTMLElement, rerender: () => void) {
@@ -39,7 +39,7 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
 
   // plan tabs —— 仅切换「查看」的方案，不改变当前执行方案（pill/设置保持同步）
   if (cfg.view_plan == null || !getPlan(cfg.view_plan ?? "")) {
-    cfg.view_plan = cfg.current_plan ?? cfg.plans[0]?.name ?? null;
+    cfg.view_plan = cfg.fixed_plan ?? cfg.plans[0]?.name ?? null;
   }
   const tabs = el("div", { class: "plan-tabs" });
   for (const p of cfg.plans) {
@@ -141,7 +141,7 @@ function openRenameDialog(oldName: string, rerender: () => void) {
     clearErr();
     const plan = getPlan(oldName)!;
     plan.name = v;
-    if (store.cfg.current_plan === oldName) store.cfg.current_plan = v;
+    if (store.cfg.fixed_plan === oldName) store.cfg.fixed_plan = v;
     if (store.cfg.view_plan === oldName) store.cfg.view_plan = v;
     const i = store.cfg.loop_cfg.order.indexOf(oldName);
     if (i >= 0) store.cfg.loop_cfg.order[i] = v;
@@ -179,7 +179,7 @@ function openNewPlan(rerender: () => void) {
     if (store.cfg.plans.some((p) => p.name === v)) { showErr("方案名称已存在"); return; }
     clearErr();
     store.cfg.plans.push({ name: v, times: [] });
-    store.cfg.current_plan = v;
+    store.cfg.fixed_plan = v;
     store.cfg.view_plan = v;
     saveConfig();
     closeModal();
@@ -198,7 +198,7 @@ function openNewPlan(rerender: () => void) {
 function openDeletePlan(name: string, rerender: () => void) {
   const cfg = store.cfg;
   const inLoop = cfg.loop_cfg.order.includes(name);
-  const isCurrent = cfg.current_plan === name;
+  const isCurrent = cfg.fixed_plan === name;
   let desc = `确定要删除方案「${name}」吗？`;
   if (inLoop) desc = `已添加到循环序列，删除后将从循环中移除。确定要删除吗？`;
   if (isCurrent) desc = `是当前执行方案，删除后将自动切换执行方案。确定要删除吗？`;
@@ -210,11 +210,11 @@ function openDeletePlan(name: string, rerender: () => void) {
     onConfirm: () => {
       cfg.plans = cfg.plans.filter((p) => p.name !== name);
       cfg.loop_cfg.order = cfg.loop_cfg.order.filter((p) => p !== name);
-      if (cfg.current_plan === name) {
-        cfg.current_plan = cfg.plans[0]?.name ?? null;
+      if (cfg.fixed_plan === name) {
+        cfg.fixed_plan = cfg.plans[0]?.name ?? null;
       }
       if (store.cfg.view_plan === name) {
-        store.cfg.view_plan = cfg.current_plan ?? cfg.plans[0]?.name ?? null;
+        store.cfg.view_plan = cfg.fixed_plan ?? cfg.plans[0]?.name ?? null;
       }
       if (cfg.plans.length < 2) {
         cfg.loop_cfg.enabled = false;

@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { store, loadConfig, saveConfig, getCurrentPlan, getEffectivePlanName } from "./store";
+import { store, loadConfig, saveConfig, getFixedPlan, getEffectivePlanName } from "./store";
 import { el, svgIcon, closeModal, modalOpen, toast, openModal } from "./ui";
 import { showCountdown, cancelCountdown, isCountdownActive } from "./countdown";
 import { installDiagnostics } from "./diag";

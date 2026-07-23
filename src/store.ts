@@ -3,7 +3,7 @@ import { api, type AppConfig, type Plan } from "./api";
 const defaults: AppConfig = {
   version: "V1.0.20260723",
   plans: [],
-  current_plan: null,
+  fixed_plan: null,
   view_plan: null,
   loop_cfg: { enabled: false, granularity: "day", interval: 1, start: "", order: [] },
   settings: {
@@ -58,9 +58,9 @@ export function getPlan(name: string): Plan | undefined {
   return cfg.plans.find((p) => p.name === name);
 }
 
-export function getCurrentPlan(): Plan | undefined {
-  if (cfg.current_plan == null) return undefined;
-  return cfg.plans.find((p) => p.name === cfg.current_plan);
+export function getFixedPlan(): Plan | undefined {
+  if (cfg.fixed_plan == null) return undefined;
+  return cfg.plans.find((p) => p.name === cfg.fixed_plan);
 }
 
 export function sortTimes(times: string[]): string[] {
@@ -70,11 +70,11 @@ export function sortTimes(times: string[]): string[] {
 /** Recompute which plan is "current" given loop order + start date. */
 export function computeLoopCurrent(): string | null {
   const lc = cfg.loop_cfg;
-  if (!lc.enabled || lc.order.length === 0) return cfg.current_plan;
+  if (!lc.enabled || lc.order.length === 0) return cfg.fixed_plan;
   // Calculate which plan is currently active based on elapsed intervals from start date
   const now = new Date();
   const startY = lc.start ? parseInt(lc.start.split("-")[0], 10) : now.getFullYear();
-  if (isNaN(startY)) return lc.order[0] ?? cfg.current_plan;
+  if (isNaN(startY)) return lc.order[0] ?? cfg.fixed_plan;
 
   let elapsedIntervals: number;
   if (lc.granularity === "month") {
@@ -100,12 +100,12 @@ export function computeLoopCurrent(): string | null {
 
   // Handle negative (start date in future) — treat as index 0
   const idx = ((elapsedIntervals % lc.order.length) + lc.order.length) % lc.order.length;
-  return lc.order[idx] ?? cfg.current_plan;
+  return lc.order[idx] ?? cfg.fixed_plan;
 }
 
 /** Get the currently effective plan name for display / execution */
 export function getEffectivePlanName(): string | null {
   const lc = cfg.loop_cfg;
   if (lc.enabled) return computeLoopCurrent();
-  return cfg.current_plan;
+  return cfg.fixed_plan;
 }

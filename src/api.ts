@@ -24,8 +24,8 @@ export interface Settings {
 export interface AppConfig {
   version: string;
   plans: Plan[];
-  current_plan: string | null;
-  /** 方案管理页上次查看的方案（与 current_plan 解耦，仅用于恢复选中标签） */
+  fixed_plan: string | null;
+  /** 方案管理页上次查看的方案（与 fixed_plan 解耦，仅用于恢复选中标签） */
   view_plan?: string | null;
   loop_cfg: LoopConfig;
   settings: Settings;

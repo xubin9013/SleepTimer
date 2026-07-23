@@ -66,8 +66,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub plans: Vec<Plan>,
     #[serde(default)]
-    pub current_plan: Option<String>,
-    /// 方案管理页「当前查看的方案」：与 current_plan（当前执行方案）解耦，
+    pub fixed_plan: Option<String>,
+    /// 方案管理页「当前查看的方案」：与 fixed_plan（当前执行方案）解耦，
     /// 仅用于记住用户在方案管理页上次停留在哪个方案标签（胶囊），退出重开后可恢复。
     #[serde(default)]
     pub view_plan: Option<String>,
@@ -95,7 +95,7 @@ impl AppConfig {
         AppConfig {
             version: build_version(),
             plans: vec![],
-            current_plan: None,
+            fixed_plan: None,
             view_plan: None,
             loop_cfg: LoopConfig {
                 enabled: false,

@@ -122,12 +122,12 @@ export function renderSettings(container: HTMLElement, rerender: () => void) {
       planChips.append(el("span", { class: "card-desc", text: "暂无方案，请先在方案管理中创建" }));
     } else {
       for (const p of cfg.plans) {
-        const active = p.name === cfg.current_plan;
+        const active = p.name === cfg.fixed_plan;
         const b = el("button", {
           class: "plan-chip" + (active ? " active" : ""),
           text: p.name,
           title: p.name,
-          onclick: () => { cfg.current_plan = p.name; saveConfig(); rerender(); },
+          onclick: () => { cfg.fixed_plan = p.name; saveConfig(); rerender(); },
         });
         planChips.append(b);
       }
