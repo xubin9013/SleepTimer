@@ -40,14 +40,15 @@ Function .onInit
 FunctionEnd
 
 ; ---- 检测 SleepTimer 是否在运行，结果写入 $R0 (1=运行中) ----
-; 方案：tasklist 经 find /I /C 计数；find 退出码 0=匹配到进程, 1=无匹配。
-; 注意：nsExec::ExecToStack 先压 stdout 再压退出码，故首个 Pop 是退出码。
+; 方案：tasklist /FI 精确匹配映像名（避免子串误匹配其他进程），再经 find /I /C 统计行数。
+; nsExec::ExecToStack 先压 stdout 再压退出码，故首个 Pop 是退出码、第二个 Pop 是输出计数。
+; 仅当匹配到真正的 SleepTimer.exe 进程（计数>0）才判定为运行中。
 Function IsRunning
   StrCpy $R0 0
-  nsExec::ExecToStack 'cmd /c tasklist /NH | find /I /C "sleeptimer.exe"'
-  Pop $1  ; 退出码（find: 0=找到进程, 1=未找到）
-  Pop $2  ; stdout（匹配行数，此处丢弃）
-  ${If} $1 == "0"
+  nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq SleepTimer.exe" /NH | find /I /C "SleepTimer.exe"'
+  Pop $1  ; 退出码（find: 0=找到, 1=未找到）
+  Pop $2  ; stdout：匹配到的 SleepTimer.exe 进程行数（如 "0" 或 "1"）
+  ${If} $2 != "0"
     StrCpy $R0 1
   ${EndIf}
 FunctionEnd
