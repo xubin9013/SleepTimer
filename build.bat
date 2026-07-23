@@ -14,10 +14,29 @@ if errorlevel 1 (
   goto fail
 )
 where node >nul 2>&1
-if errorlevel 1 (
-  echo [ERROR] node not found. Node.js is required for the frontend build.
-  goto fail
+if not errorlevel 1 goto node_ok
+
+echo [WARN] node not found on PATH, probing common install dirs...
+set "FOUND_NODE="
+for %%D in (
+  "C:\Program Files\nodejs"
+  "C:\Program Files (x86)\nodejs"
+  "%LOCALAPPDATA%\Programs\nodejs"
+  "%ProgramFiles%\nodejs"
+  "C:\ProgramData\chocolatey\bin"
+  "%LOCALAPPDATA%\Volta\bin"
+  "%APPDATA%\nvm"
+) do (
+  if not defined FOUND_NODE if exist "%%~D\node.exe" set "FOUND_NODE=%%~D"
 )
+if defined FOUND_NODE (
+  echo [OK] node found at %FOUND_NODE%, adding to PATH for this session.
+  set "PATH=%FOUND_NODE%;%PATH%"
+  goto node_ok
+)
+echo [ERROR] node not found. Install Node.js (https://nodejs.org) or add its dir to PATH.
+goto fail
+:node_ok
 
 echo [1/4] Touch build.rs to force Cargo rerun (bumps same-day build counter)...
 copy /b "src-tauri\build.rs" +,, >nul 2>&1
