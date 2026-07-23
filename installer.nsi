@@ -7,6 +7,8 @@ Name "SleepTimer"
 OutFile "SleepTimer-Setup.exe"
 InstallDir "D:\Program Files\SleepTimer"
 RequestExecutionLevel admin
+; ★ 默认走 GUI 向导；仅当带上 /S 参数（程序内"立即更新"自动安装）才静默安装
+SilentInstall normal
 
 Var chkDesktop
 Var chkAuto
@@ -28,6 +30,13 @@ Function .onInit
   StrCpy $createDesktop 1
   StrCpy $autoStart 1
   Call CheckRunningAtStart
+  ; ★ 静默更新（/S）：沿用上一次的安装目录，避免装到默认路径产生重复副本
+  ${If} ${Silent}
+    ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SleepTimer" "InstallLocation"
+    ${If} $0 != ""
+      StrCpy $INSTDIR $0
+    ${EndIf}
+  ${EndIf}
 FunctionEnd
 
 ; ---- 检测 SleepTimer 是否在运行，结果写入 $R0 (1=运行中) ----
@@ -217,14 +226,28 @@ Section "Install"
     WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SleepTimer" '"$INSTDIR\SleepTimer.exe" --silent'
   ${EndIf}
 
+  ; ★ 静默更新（/S）：安装完成后自动重启程序，使"立即更新"流程闭环
+  ${If} ${Silent}
+    Exec '"$INSTDIR\SleepTimer.exe"'
+  ${EndIf}
+
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SleepTimer" "DisplayName" "SleepTimer"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SleepTimer" "UninstallString" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SleepTimer" "DisplayIcon" "$INSTDIR\SleepTimer.exe"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SleepTimer" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SleepTimer" "Publisher" "Senior Developer"
 
   ; 若因文件被占用触发了"重启后替换"，提示用户（避免误以为装坏）
   IfRebootFlag 0 +2
     MessageBox MB_OK|MB_ICONINFORMATION "部分文件此前被占用，将在本次安装完成后于下次重启电脑时自动替换为新版本。如安装后程序异常，请重启一次即可。"
+
+  ; ★ 仅“立即更新”自动安装（/S 静默）成功后清理下载包（update 文件夹）；
+  ;   手动运行安装包（GUI）不删除，保留 update 目录交由用户自行处理。
+  ;   安装程序自身已解压到临时目录运行，静默删除源 update 目录不会误删正在运行的安装程序。
+  ${If} ${Silent}
+    RMDir /r "$INSTDIR\update"
+  ${EndIf}
+
 SectionEnd
 
 Section "Uninstall"

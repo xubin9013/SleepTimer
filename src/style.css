@@ -155,8 +155,20 @@ button { font-family: inherit; }
 .titlebar .drag { flex: 1; height: 100%; }
 .titlebar .app-icon { width: 32px; height: 32px; border-radius: var(--radius-sm); }
 .titlebar .app-name { font-size: var(--text-lg); font-weight: 600; color: var(--gray-900); }
-.titlebar .app-version { font-size: var(--text-xs); color: var(--gray-400); margin-left: 2px; cursor: pointer; transition: color 120ms ease; }
+.titlebar .app-version { font-size: var(--text-xs); color: var(--gray-400); margin-left: 2px; cursor: pointer; transition: color 120ms ease; position: relative; }
 .titlebar .app-version:hover { color: var(--primary-500); text-decoration: underline dotted; }
+/* 版本号红点：有新版本时点亮，提醒用户（不依赖弹窗） */
+.titlebar .app-version.has-update { color: var(--danger-600); }
+.titlebar .app-version.has-update::after {
+  content: "";
+  position: absolute; top: -3px; right: -9px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger-500);
+  box-shadow: 0 0 0 2px var(--bg-sidebar);
+  animation: dot-pulse 1.8s ease-in-out infinite;
+}
+@keyframes dot-pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.7; } }
+@media (prefers-reduced-motion: reduce) { .titlebar .app-version.has-update::after { animation: none; } }
 .titlebar .spacer { flex: 1; }
 
 .pill {
@@ -487,6 +499,12 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 }
 [data-theme="dark"] .update-notes { background: rgba(255,255,255,0.04); color: var(--gray-300); }
 .modal .danger-name { color: var(--danger-500); font-size: var(--text-sm); text-align: center; font-weight: 500; }
+
+/* 更新下载进度条 */
+.update-progress { height: 8px; border-radius: var(--radius-full); background: var(--gray-200); overflow: hidden; margin: 4px 0 8px; }
+[data-theme="dark"] .update-progress { background: var(--gray-300); }
+.update-progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary-400), var(--primary-600)); transition: width 200ms ease; }
+.update-pct { text-align: center; font-size: var(--text-sm); color: var(--gray-500); font-variant-numeric: tabular-nums; }
 
 /* ---------- Pickers ---------- */
 .picker-cols { display: flex; gap: var(--space-2); justify-content: center; position: relative; }

@@ -3,8 +3,6 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use chrono::Local;
-
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Plan {
     pub name: String,
@@ -69,6 +67,10 @@ pub struct AppConfig {
     pub plans: Vec<Plan>,
     #[serde(default)]
     pub current_plan: Option<String>,
+    /// 方案管理页「当前查看的方案」：与 current_plan（当前执行方案）解耦，
+    /// 仅用于记住用户在方案管理页上次停留在哪个方案标签（胶囊），退出重开后可恢复。
+    #[serde(default)]
+    pub view_plan: Option<String>,
     #[serde(default)]
     pub loop_cfg: LoopConfig,
     #[serde(default)]
@@ -79,11 +81,13 @@ fn default_version() -> String {
     build_version()
 }
 
-/// 程序版本号：V1.0.{当前日期}，与界面 get_app_info 显示、app.json 中的 version 完全一致。
-/// 运行时按当天日期生成（不再依赖编译期注入，避免构建缓存导致版本滞后）。
+/// 程序版本号：与 GitHub Release 的 tag 保持一致，作为「更新检查」的比对基准。
+/// 必须是【构建时固定注入】的版本（来自 Cargo.toml 的 package.version），
+/// 不能再按运行时日期生成——否则同一天发布新版本后，新 exe 仍按当天日期报版本，
+/// 永远小于已发布的 tag，导致「更新后依旧提示有新版本」。
+/// 发布新版本时：同步递增 Cargo.toml 的 version 与 GitHub Release 的 tag（两者须完全一致）。
 pub fn build_version() -> String {
-    let d = Local::now().format("%Y%m%d").to_string();
-    format!("V1.0.{}", d)
+    format!("V{}", env!("CARGO_PKG_VERSION"))
 }
 
 impl AppConfig {
@@ -92,6 +96,7 @@ impl AppConfig {
             version: build_version(),
             plans: vec![],
             current_plan: None,
+            view_plan: None,
             loop_cfg: LoopConfig {
                 enabled: false,
                 granularity: "day".to_string(),
@@ -201,8 +206,8 @@ pub fn save_config(cfg: &AppConfig) -> Result<(), String> {
     Ok(())
 }
 
-/// Read all screen-off log entries (current + archived files), oldest first.
-/// 文件命名：screenoff-YYYY-MM-DD.log（按日轮转），每行一条 JSON（JSON Lines）。
+/// Read all screen-off log entries (active + rotated + legacy files), oldest first.
+/// 文件命名：screenoff.log（活跃）/ screenoff.N.log（按大小滚动归档）/ screenoff-YYYY-MM-DD.log（旧日期格式，兼容历史）；每行一条 JSON（JSON Lines）。
 pub fn read_logs() -> Vec<serde_json::Value> {
     let dirs = candidate_log_dirs();
     let mut files: Vec<PathBuf> = Vec::new();
@@ -212,8 +217,9 @@ pub fn read_logs() -> Vec<serde_json::Value> {
             for e in read.filter_map(|e| e.ok()) {
                 let p = e.path();
                 if let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) {
-                    // 按文件名去重（同一天的日志只可能存在于一个目录）
-                    if name.starts_with("screenoff-") && name.ends_with(".log") && seen.insert(name) {
+                    // 按文件名去重（同一类日志只可能存在于一个目录）
+                    // 匹配：screenoff.log（活跃）/ screenoff.N.log（滚动归档）/ screenoff-YYYY-MM-DD.log（旧日期格式，兼容历史）
+                    if name.starts_with("screenoff") && name.ends_with(".log") && seen.insert(name) {
                         files.push(p);
                     }
                 }
@@ -250,7 +256,8 @@ pub fn clear_logs() -> Result<(), String> {
             for e in read.filter_map(|e| e.ok()) {
                 let p = e.path();
                 if let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) {
-                    if name.starts_with("screenoff-") && name.ends_with(".log") {
+                    // 删除所有熄屏日志：screenoff.log / screenoff.N.log / 旧 screenoff-*.log
+                    if name.starts_with("screenoff") && name.ends_with(".log") {
                         fs::remove_file(&p).ok();
                     }
                 }

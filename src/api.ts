@@ -25,6 +25,8 @@ export interface AppConfig {
   version: string;
   plans: Plan[];
   current_plan: string | null;
+  /** 方案管理页上次查看的方案（与 current_plan 解耦，仅用于恢复选中标签） */
+  view_plan?: string | null;
   loop_cfg: LoopConfig;
   settings: Settings;
 }
@@ -58,6 +60,8 @@ export const api = {
   getCountdownState: () => invoke<any | null>("get_countdown_state"),
   /** 检测更新：向 GitHub Releases 最新发布接口请求，返回发布信息 JSON */
   checkUpdate: () => invoke<any>("check_update"),
+  /** 自动更新：下载安装包到临时目录并静默覆盖安装（Rust 端完成后会退出并重启程序） */
+  downloadAndInstall: (url: string) => invoke("download_and_install", { url }),
   /** 在系统默认浏览器打开外部链接（前往下载等） */
   openUrl: (url: string) => invoke("open_url", { url }),
 };

@@ -11,6 +11,8 @@ use std::thread;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
+use tokio::io::AsyncWriteExt;
+use futures_util::StreamExt;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
@@ -345,11 +347,15 @@ async fn check_update() -> Result<serde_json::Value, String> {
             format!("网络请求失败（请检查网络/代理设置）: {}", clean)
         })?;
     if !resp.status().is_success() {
-        // 404 表示仓库暂无“最新发布”（可能只有草稿/标签，未正式发布）
-        return Err(format!(
-            "GitHub 返回 {}，可能仓库尚未发布 Release",
-            resp.status()
-        ));
+        // 注意：私有仓库 / 不存在的仓库 / 未发布正式 Release（草稿、预发布）
+        // 都会被 GitHub 的 /releases/latest 接口返回 404，而非 401/403。
+        // 故 404 不能简单归因为“没发布”，需提示可见性/鉴权问题。
+        let hint = if resp.status() == 404 {
+            "仓库可能不存在、为私有仓库（需鉴权），或未发布正式 Release（草稿/预发布不会被 /releases/latest 识别）"
+        } else {
+            "GitHub 返回了异常状态码，可能是限流或服务异常"
+        };
+        return Err(format!("检查更新失败（HTTP {}）：{}。", resp.status(), hint));
     }
     let json: serde_json::Value = resp
         .json()
@@ -386,6 +392,89 @@ fn open_url(url: String) -> Result<(), String> {
             .map_err(|e| format!("打开链接失败: {}", e))?;
     }
     Ok(())
+}
+
+/// 自动更新：下载指定安装包到 <安装目录>/update/ 下，随后静默启动安装程序（/S）
+/// 覆盖安装，并退出当前进程释放被占用的 exe；由安装包在安装完成后自动重启程序，
+/// 并在成功后删除 <安装目录>/update/ 下的下载包，使更新闭环。
+/// 下载进度通过 `update:progress` 事件持续推送至前端（{downloaded, total, pct}）。
+#[tauri::command]
+async fn download_and_install(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use std::process::Stdio;
+    // ★ 下载到安装目录下的 update 文件夹（便于安装程序安装完成后清理）。
+    //   安装目录 = 当前 exe 所在目录（生产环境即 $INSTDIR）。
+    let exe = std::env::current_exe().map_err(|e| format!("获取程序路径失败: {}", e))?;
+    let install_dir = exe
+        .parent()
+        .ok_or_else(|| "无法定位安装目录（exe 无父目录）".to_string())?
+        .to_path_buf();
+    let update_dir = install_dir.join("update");
+    std::fs::create_dir_all(&update_dir).map_err(|e| format!("创建 update 目录失败: {}", e))?;
+    let path = update_dir.join("SleepTimer-Setup.exe");
+
+    let client = reqwest::Client::builder()
+        .user_agent("SleepTimer")
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("创建下载客户端失败: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| {
+            let raw = e.to_string();
+            let clean = raw.replace(&url, "<下载地址>");
+            format!("下载失败（请检查网络/代理）: {}", clean)
+        })?;
+    if !resp.status().is_success() {
+        return Err(format!("下载失败：GitHub 返回 HTTP {}", resp.status()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut stream = resp.bytes_stream();
+    // ★ 关键修复 os error 32：下载文件写入独立作用域，离开作用域即 drop 关闭文件句柄，
+    //   避免随后 spawn 同一文件时因共享锁未释放触发 ERROR_SHARING_VIOLATION。
+    {
+        let mut file = tokio::fs::File::create(&path)
+            .await
+            .map_err(|e| format!("创建更新文件失败: {}", e))?;
+        let mut downloaded: u64 = 0;
+        let mut last_pct: i64 = -1;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("读取下载流失败: {}", e))?;
+            file.write_all(&chunk).await.map_err(|e| format!("写入文件失败: {}", e))?;
+            downloaded += chunk.len() as u64;
+            let pct = if total > 0 {
+                (downloaded * 100 / total) as i64
+            } else {
+                -1
+            };
+            if pct != last_pct {
+                last_pct = pct;
+                let _ = app.emit(
+                    "update:progress",
+                    serde_json::json!({ "downloaded": downloaded, "total": total, "pct": pct }),
+                );
+            }
+        }
+        file.flush().await.ok();
+        file.sync_all().await.ok();
+        // 离开作用域 → File drop → 释放文件共享锁
+    }
+    // 隐藏主窗口，避免安装时界面占用
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.hide();
+    }
+    // ★ 启动静默安装（/S）：安装程序会替换 $INSTDIR\SleepTimer.exe。
+    //   spawn 后立刻 exit(0) 释放当前进程占用的 exe，NSIS 即可直接覆盖；
+    //   安装程序完成后自动重启程序（见 installer.nsi 的 ${If} ${Silent} Exec）。
+    std::process::Command::new(&path)
+        .arg("/S")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("启动安装程序失败: {}", e))?;
+    std::process::exit(0);
 }
 
 /// 是否以静默模式启动（开机自启场景）。
@@ -448,7 +537,8 @@ pub fn run() {
             get_countdown_state,
             close_countdown_windows,
             check_update,
-            open_url
+            open_url,
+            download_and_install
         ])
         .setup(|app| {
             // startup record（异步发送，绝不阻塞启动）

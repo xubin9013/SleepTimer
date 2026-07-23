@@ -1,9 +1,10 @@
 import { api, type AppConfig, type Plan } from "./api";
 
 const defaults: AppConfig = {
-  version: "V1.0.260714",
+  version: "V1.0.20260723",
   plans: [],
   current_plan: null,
+  view_plan: null,
   loop_cfg: { enabled: false, granularity: "day", interval: 1, start: "", order: [] },
   settings: {
     theme: "light",

@@ -5,5 +5,7 @@ fn main() {
     // 编译时注入构建日期（YYYYMMDD），供标题栏版本号显示使用
     let build_date = chrono::Local::now().format("%Y%m%d").to_string();
     println!("cargo:rustc-env=APP_BUILD_DATE={}", build_date);
+    // 当 package.version 变化时重新构建，确保 build_version() 取到最新版本
+    println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=build.rs");
 }

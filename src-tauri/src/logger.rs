@@ -1,95 +1,74 @@
-/// 行业标准日志系统
+/// 日志系统（按类别分文件 + 按大小滚动，不做自动清理）
 ///
-/// 文件命名：sleeptimer-YYYY-MM-DD.log（每日一个活跃日志，超出 5MB 自动轮转）
-/// 轮转归档：sleeptimer-YYYY-MM-DD.{created_ts}-{rotated_ts}.log
-/// 自动清理：启动时删除超过 30 天的旧日志
-/// 格式：2026-07-17 09:23:08.123 [INFO ] [component] message
+/// 两类日志：
+///   - 熄屏日志：screenoff.log   （base = "screenoff"）
+///   - 运行日志：sleeptimer.log  （base = "sleeptimer"）
 ///
-/// 级别（从低到高）：TRACE < DEBUG < INFO < WARN < ERROR < FATAL
+/// 活跃文件固定为 `<base>.log`；每次写入前若累计大小将超 5MB，则滚动：
+///   将当前 `<base>.log` 重命名为 `<base>.<N>.log`（N 为递增序号，取现有最大序号 + 1），
+///   再新建空的 `<base>.log` 继续写入。
+/// 滚动归档文件永不被自动删除，由用户手动清理。
+///
+/// 行格式：2026-07-17 09:23:08.123 [INFO ] [component] message
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-const MAX_BYTES: u64 = 5 * 1024 * 1024; // 5 MB per file
-const RETAIN_DAYS: i64 = 30;             // 保留最近 30 天
+const MAX_BYTES: u64 = 5 * 1024 * 1024; // 单文件 5 MB 上限
 
 pub struct AppLogger {
     dir: PathBuf,
     base: String,
     file: Option<File>,
     size: u64,
-    date_str: String,
 }
 
 impl AppLogger {
-    /// 创建应用日志器。base 通常为 "sleeptimer"。
+    /// 创建应用日志器。base 通常为 "screenoff" 或 "sleeptimer"。
     pub fn new(dir: PathBuf, base: &str) -> Self {
         let mut logger = AppLogger {
             dir,
             base: base.to_string(),
             file: None,
             size: 0,
-            date_str: String::new(),
         };
-        // 启动时清理过期日志
-        Self::cleanup_old(&logger.dir, &logger.base);
         logger.ensure();
         logger
     }
 
-    fn today() -> String {
-        chrono::Local::now().format("%Y-%m-%d").to_string()
+    /// 活跃日志文件路径：<dir>/<base>.log
+    fn active_path(&self) -> PathBuf {
+        self.dir.join(format!("{}.log", self.base))
     }
 
-    fn now_compact() -> String {
-        chrono::Local::now().format("%Y%m%d-%H%M%S").to_string()
-    }
-
-    /// 删除超过 RETAIN_DAYS 天的旧日志文件
-    fn cleanup_old(dir: &Path, base: &str) {
-        if !dir.is_dir() { return; }
-        let cutoff = chrono::Local::now() - chrono::Duration::days(RETAIN_DAYS);
-        let cutoff_str = cutoff.format("%Y-%m-%d").to_string();
-
-        if let Ok(read) = fs::read_dir(dir) {
+    /// 计算下一个滚动序号：扫描 <base>.<N>.log，取最大 N + 1（不存在则为 1）。
+    fn next_rotate_index(&self) -> u64 {
+        let mut max = 0u64;
+        if let Ok(read) = fs::read_dir(&self.dir) {
             for entry in read.filter_map(|e| e.ok()) {
-                let name = entry.file_name();
-                let name_str = name.to_string_lossy();
-                // 匹配 sleeptimer-YYYY-MM-DD.log 或 sleeptimer-YYYY-MM-DD.*.log
-                if !name_str.starts_with(&format!("{}-", base)) || !name_str.ends_with(".log") {
-                    continue;
-                }
-                // 从文件名提取日期部分
-                let date_part = name_str
-                    .strip_prefix(&format!("{}-", base))
-                    .and_then(|rest| rest.split('.').next())
-                    .unwrap_or("");
-                // 只删除日期早于截止日的文件（保留当日和近期的）
-                if !date_part.is_empty() && date_part < cutoff_str.as_str() {
-                    let _ = fs::remove_file(entry.path());
+                let name = entry.file_name().to_string_lossy().to_string();
+                // 仅匹配 <base>.<N>.log 这种滚动归档
+                if let Some(rest) = name.strip_prefix(&format!("{}.", self.base)) {
+                    if let Some(num) = rest.strip_suffix(".log") {
+                        if let Ok(n) = num.parse::<u64>() {
+                            if n > max {
+                                max = n;
+                            }
+                        }
+                    }
                 }
             }
         }
+        max + 1
     }
 
+    /// 确保活跃文件已打开（不存在则打开/创建，并同步当前大小）。
     fn ensure(&mut self) {
-        let today = Self::today();
-        // 日期变更时切换到新文件
-        if self.date_str != today || self.file.is_none() {
-            self.date_str = today.clone();
-            if let Some(f) = self.file.take() {
-                drop(f); // 关闭旧文件句柄
-            }
-        }
         if self.file.is_none() {
             let _ = fs::create_dir_all(&self.dir);
-            let path = self.dir.join(format!("{}-{}.log", self.base, self.date_str));
-            match OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-            {
+            let path = self.active_path();
+            match OpenOptions::new().create(true).append(true).open(&path) {
                 Ok(f) => {
                     self.size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                     self.file = Some(f);
@@ -99,36 +78,31 @@ impl AppLogger {
         }
     }
 
+    /// 滚动：关闭当前活跃文件，重命名为 <base>.<N>.log，再打开新的活跃文件。
     fn rotate(&mut self) {
         if let Some(f) = self.file.take() {
+            let _ = f.sync_all();
             drop(f);
         }
-        let path = self.dir.join(format!(
-            "{}-{}.log",
-            self.base, self.date_str
-        ));
-        let archive = self.dir.join(format!(
-            "{}-{}.{}-{}.log",
-            self.base,
-            self.date_str,
-            Self::now_compact(),
-            Self::now_compact()
-        ));
-        let _ = fs::rename(&path, &archive);
-        self.ensure(); // 打开新文件
+        let active = self.active_path();
+        let idx = self.next_rotate_index();
+        let archive = self.dir.join(format!("{}.{}.log", self.base, idx));
+        let _ = fs::rename(&active, &archive);
+        self.ensure();
     }
 
-    /// 写入一行格式化日志。外部应通过 fmt_log() 统一格式化后传入。
+    /// 写入一行格式化日志。外部应经 fmt_log() 统一格式化后传入。
     pub fn write_line(&mut self, line: &str) {
         self.ensure();
-        let bytes = line.as_bytes();
-        if self.size > 0 && self.size + bytes.len() as u64 > MAX_BYTES {
+        let line_bytes = line.as_bytes().len() as u64;
+        // 即将超过上限则先滚动（活跃文件若已超 5MB，首行也会触发滚动）
+        if self.size > 0 && self.size + line_bytes + 1 > MAX_BYTES {
             self.rotate();
         }
         if let Some(f) = self.file.as_mut() {
             let _ = writeln!(f, "{}", line);
             let _ = f.flush();
-            self.size += bytes.len() as u64 + 1; // +1 for newline
+            self.size += line_bytes + 1; // +1 for newline
         }
     }
 }

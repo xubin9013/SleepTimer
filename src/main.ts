@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { store, loadConfig, saveConfig, getCurrentPlan, getEffectivePlanName } from "./store";
 import { el, svgIcon, closeModal, modalOpen, toast, openModal } from "./ui";
 import { showCountdown, cancelCountdown, isCountdownActive } from "./countdown";
@@ -15,6 +16,9 @@ let themeBtn!: HTMLElement;
 let appRoot!: HTMLElement;
 let versionEl!: HTMLElement;
 let navItems: { mod: string; el: HTMLElement }[] = [];
+// 更新状态（供版本号红点与"立即更新"使用）
+let updateAssetUrl: string | null = null;
+const updateHtmlUrl = "https://github.com/xubin9013/SleepTimer/releases";
 
 function buildShell() {
   appRoot = document.getElementById("app")!;
@@ -33,7 +37,7 @@ function buildShell() {
   // ★ 点击版本号检测更新（更新源：GitHub Releases）
   versionEl.style.cursor = "pointer";
   versionEl.title = "点击检查更新";
-  versionEl.addEventListener("click", () => checkUpdate());
+  versionEl.addEventListener("click", () => runManualCheck());
   const left = el("div", { class: "drag", style: "display:flex;align-items:center;gap:8px", "data-tauri-drag-region": "" }, appIcon, name, version);
   const spacer = el("div", { class: "drag", "data-tauri-drag-region": "" });
 
@@ -251,6 +255,9 @@ async function buildMainApp() {
   render();
   startScheduler();
 
+  // ★ 启动后静默检查更新：仅在有更新时点亮版本号红点提醒，不弹窗、不报错
+  autoCheckUpdate();
+
   // ★ 隐藏全局右键菜单
   document.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -258,77 +265,167 @@ async function buildMainApp() {
 }
 
 
-/** 点击版本号 → 检测 GitHub 最新发布，比对版本并引导前往下载。 */
-async function checkUpdate() {
+/** 点亮/熄灭版本号红点（提醒有新版本） */
+function showUpdateDot() { versionEl?.classList.add("has-update"); }
+function hideUpdateDot() { versionEl?.classList.remove("has-update"); }
+
+interface UpdateInfo {
+  status: "update" | "uptodate" | "newer";
+  tag: string;
+  notes: string;
+  published: string;
+  assetUrl: string;
+  htmlUrl: string;
+  current: string;
+}
+
+/** 拉取 GitHub 最新发布并比对版本，返回结构化结果（不含 UI 行为）。 */
+async function fetchUpdateInfo(): Promise<UpdateInfo> {
   const current = (window as any).__APP_VERSION__ || store.cfg.version || "";
+  const data = await api.checkUpdate();
+  const tag: string = data?.tag_name || "";
+  const htmlUrl: string = data?.html_url || updateHtmlUrl;
+  const notes: string = data?.body || "";
+  const published: string = data?.published_at ? String(data.published_at).slice(0, 10) : "";
+  // 规范化：小写、去前导 v，使 V1.0.x / v1.0.x 可比较
+  const norm = (v: string) => String(v || "").trim().toLowerCase().replace(/^v/, "");
+  const nCur = norm(current);
+  const nLat = norm(tag);
+  let status: UpdateInfo["status"];
+  if (!tag || nLat === nCur) status = "uptodate";
+  else if (nLat > nCur) status = "update";
+  else status = "newer";
+  // 从发布资源中找出安装包（.exe）的下载地址
+  let assetUrl = "";
+  const assets = Array.isArray(data?.assets) ? (data.assets as any[]) : [];
+  const exe =
+    assets.find((a) => /sleep.?timer.*\.exe$/i.test(a?.name || "")) ||
+    assets.find((a) => (a?.name || "").toLowerCase().endsWith(".exe"));
+  if (exe?.browser_download_url) assetUrl = exe.browser_download_url;
+  return { status, tag, notes, published, assetUrl, htmlUrl, current };
+}
+
+/** 渲染更新弹窗（含"立即更新"按钮，仅在能自动下载时显示）。 */
+function showUpdateModal(info: UpdateInfo) {
+  const body = el("div", { class: "update-body" });
+  const infoBox = el("div", { class: "update-info" });
+  infoBox.append(
+    el("div", { class: "update-row" },
+      el("span", { class: "k", text: "当前版本" }),
+      el("span", { class: "v", text: info.current })
+    )
+  );
+  if (info.tag) {
+    infoBox.append(
+      el("div", { class: "update-row" },
+        el("span", { class: "k", text: "最新版本" }),
+        el("span", { class: "v", text: info.tag + (info.published ? `  (${info.published})` : "") })
+      )
+    );
+  }
+  body.append(infoBox);
+  if (info.notes) {
+    body.append(el("pre", { class: "update-notes", text: info.notes.trim().slice(0, 800) }));
+  }
+
+  const actions: { label: string; cls?: string; onClick: () => void }[] = [];
+  if (info.status === "update") {
+    if (info.assetUrl) {
+      // ★ 自动下载并覆盖安装
+      actions.push({
+        label: "立即更新", cls: "btn-primary",
+        onClick: () => { closeModal(); startUpdate(info.assetUrl); },
+      });
+    } else {
+      // 兜底：无可用安装包时，仍引导前往发布页手动下载
+      actions.push({
+        label: "前往下载", cls: "btn-primary",
+        onClick: () => { closeModal(); api.openUrl(info.htmlUrl).catch(() => toast("无法打开链接", "error")); },
+      });
+    }
+  }
+  // ★ “关闭”改为“关于”：点击打开当前版本在 GitHub 的发布页
+  const normV = (v: string) => String(v || "").trim().toLowerCase().replace(/^v/, "");
+  const aboutUrl = "https://github.com/xubin9013/SleepTimer/releases/tag/v" + normV(info.current);
+  actions.push({
+    label: "关于", cls: "btn-secondary",
+    onClick: () => { closeModal(); api.openUrl(aboutUrl).catch(() => toast("无法打开链接", "error")); },
+  });
+
+  let title: string;
+  let desc: string;
+  if (info.status === "update") {
+    title = "发现新版本";
+    desc = info.assetUrl
+      ? "已检测到新版本，点击「立即更新」将自动下载安装包并覆盖安装，无需手动操作。"
+      : "已检测到新版本，可前往发布页下载。";
+  } else if (info.status === "newer") {
+    title = "已是最新";
+    desc = "本地版本高于 GitHub 最新发布标签，可能尚未正式发布。";
+  } else {
+    title = "已是最新版本";
+    desc = "你当前使用的已经是最新版本。";
+  }
+  openModal({ title, desc, body, actions, sm: true, closeOnOverlay: true });
+}
+
+/** 立即更新：下载安装包（带进度），完成后由 Rust 端静默安装并重启程序。 */
+async function startUpdate(assetUrl: string) {
+  const fill = el("div", { class: "update-progress-fill" });
+  const bar = el("div", { class: "update-progress" }, fill);
+  const pctText = el("div", { class: "update-pct", text: "准备下载…" });
+  const body = el("div", {}, bar, pctText);
+  openModal({
+    title: "更新中",
+    desc: "正在下载安装包并自动覆盖安装，完成后程序将自动重启…",
+    body,
+    closeOnOverlay: false,
+    actions: [{ label: "稍候…", cls: "btn-secondary", onClick: () => closeModal() }],
+  });
+  let unlisten: (() => void) | null = null;
+  try {
+    unlisten = await listen("update:progress", (e: any) => {
+      const p = e?.payload || {};
+      const pct: number = p.pct ?? -1;
+      if (pct >= 0) {
+        fill.style.width = pct + "%";
+        pctText.textContent = pct + "%";
+      } else {
+        pctText.textContent = "下载中…";
+      }
+    });
+    await api.downloadAndInstall(assetUrl);
+    // 成功后程序由 Rust 端退出并由安装包重启，不会执行到这里
+  } catch (err) {
+    unlisten?.();
+    const msg = String((err as any)?.message || err);
+    const clean = msg
+      .replace(/https?:\/\/[^\s]+/g, "<下载地址>")
+      .replace(/error sending request for url/gi, "连接失败");
+    openModal({
+      type: "alert",
+      title: "更新失败",
+      desc: clean + "<br>可前往 <b>GitHub Releases</b> 手动下载安装。",
+      actions: [
+        { label: "前往下载", cls: "btn-primary", onClick: () => { closeModal(); api.openUrl(updateHtmlUrl).catch(() => {}); } },
+        { label: "关闭", cls: "btn-secondary", onClick: () => closeModal() },
+      ],
+      closeOnOverlay: true,
+    });
+  }
+}
+
+/** 点击版本号 → 手动检查更新并弹窗（带错误提示）。 */
+async function runManualCheck() {
   if (!versionEl) return;
-  const restore = () => { if (versionEl) versionEl.textContent = current; };
+  const restore = () => { if (versionEl) versionEl.textContent = (window as any).__APP_VERSION__ || store.cfg.version; };
   versionEl.textContent = "检查中…";
   versionEl.style.pointerEvents = "none";
   try {
-    const data = await api.checkUpdate();
-    const tag: string = data?.tag_name || "";
-    const htmlUrl: string =
-      data?.html_url || "https://github.com/xubin9013/SleepTimer/releases";
-    const notes: string = data?.body || "";
-    const published: string = data?.published_at
-      ? String(data.published_at).slice(0, 10)
-      : "";
-    // 规范化：小写、去前导 v，使 V1.0.x / v1.0.x 可比较
-    const norm = (v: string) => String(v || "").trim().toLowerCase().replace(/^v/, "");
-    const nCur = norm(current);
-    const nLat = norm(tag);
-    let status: "update" | "uptodate" | "newer";
-    if (!tag || nLat === nCur) status = "uptodate";
-    else if (nLat > nCur) status = "update";
-    else status = "newer";
-
-    const body = el("div", { class: "update-body" });
-    const info = el("div", { class: "update-info" });
-    info.append(
-      el("div", { class: "update-row" },
-        el("span", { class: "k", text: "当前版本" }),
-        el("span", { class: "v", text: current })
-      )
-    );
-    if (tag) {
-      info.append(
-        el("div", { class: "update-row" },
-          el("span", { class: "k", text: "最新版本" }),
-          el("span", { class: "v", text: tag + (published ? `  (${published})` : "") })
-        )
-      );
-    }
-    body.append(info);
-    if (notes) {
-      body.append(el("pre", { class: "update-notes", text: notes.trim().slice(0, 800) }));
-    }
-
-    const actions: { label: string; cls?: string; onClick: () => void }[] = [];
-    if (status === "update") {
-      actions.push({
-        label: "前往下载", cls: "btn-primary",
-        onClick: () => {
-          closeModal();
-          api.openUrl(htmlUrl).catch(() => toast("无法打开链接", "error"));
-        },
-      });
-    }
-    actions.push({ label: "关闭", cls: "btn-secondary", onClick: () => closeModal() });
-
-    let title: string;
-    let desc: string;
-    if (status === "update") {
-      title = "发现新版本";
-      desc = "已检测到 GitHub 上的新版本，建议前往下载更新。";
-    } else if (status === "newer") {
-      title = "已是最新";
-      desc = "本地版本高于 GitHub 最新发布标签，可能尚未正式发布。";
-    } else {
-      title = "已是最新版本";
-      desc = "你当前使用的已经是最新版本。";
-    }
-    openModal({ title, desc, body, actions, sm: true, closeOnOverlay: true });
+    const info = await fetchUpdateInfo();
+    if (info.status === "update" && info.assetUrl) { updateAssetUrl = info.assetUrl; showUpdateDot(); }
+    else { updateAssetUrl = null; hideUpdateDot(); }
+    showUpdateModal(info);
   } catch (e) {
     const msg = String((e as any)?.message || e);
     // 脱敏：不向用户展示原始 URL / 内部错误细节
@@ -343,10 +440,7 @@ async function checkUpdate() {
       actions: [
         {
           label: "前往查看", cls: "btn-primary",
-          onClick: () => {
-            closeModal();
-            api.openUrl("https://github.com/xubin9013/SleepTimer/releases").catch(() => {});
-          },
+          onClick: () => { closeModal(); api.openUrl(updateHtmlUrl).catch(() => {}); },
         },
         { label: "关闭", cls: "btn-secondary", onClick: () => closeModal() },
       ],
@@ -356,6 +450,20 @@ async function checkUpdate() {
     versionEl.style.pointerEvents = "";
     restore();
   }
+}
+
+/** 启动后静默检查更新：仅在发现更新时点亮版本号红点提醒，不弹窗、不报错。 */
+function autoCheckUpdate() {
+  fetchUpdateInfo()
+    .then((info) => {
+      if (info.status === "update" && info.assetUrl) {
+        updateAssetUrl = info.assetUrl;
+        showUpdateDot();
+      } else {
+        hideUpdateDot();
+      }
+    })
+    .catch(() => { /* 静默失败：无网络或仓库不可达，不提示 */ });
 }
 
 init();

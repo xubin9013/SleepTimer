@@ -5,8 +5,8 @@ import { api } from "../api";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-// 仅用于「查看」的方案，与当前执行方案（cfg.current_plan）解耦
-let viewPlan: string | null = null;
+// 「查看的方案」与当前执行方案（cfg.current_plan）解耦，持久化到 cfg.view_plan，
+// 退出重开后仍记得上次查看的是哪个方案标签（胶囊）。
 
 export function renderPlans(container: HTMLElement, rerender: () => void) {
   container.innerHTML = "";
@@ -38,12 +38,12 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
   }
 
   // plan tabs —— 仅切换「查看」的方案，不改变当前执行方案（pill/设置保持同步）
-  if (viewPlan == null || !getPlan(viewPlan)) {
-    viewPlan = cfg.current_plan ?? cfg.plans[0]?.name ?? null;
+  if (cfg.view_plan == null || !getPlan(cfg.view_plan ?? "")) {
+    cfg.view_plan = cfg.current_plan ?? cfg.plans[0]?.name ?? null;
   }
   const tabs = el("div", { class: "plan-tabs" });
   for (const p of cfg.plans) {
-    const isActive = p.name === viewPlan;
+    const isActive = p.name === cfg.view_plan;
     const tab = el("div", { class: "plan-tab" + (isActive ? " active" : "") }, el("span", { text: p.name }));
     const x = el("button", { class: "tab-x", html: svgIcon("x").outerHTML, title: "删除方案" });
     x.addEventListener("click", (e) => {
@@ -52,8 +52,9 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
     });
     tab.append(x);
     tab.addEventListener("click", () => {
-      if (viewPlan !== p.name) {
-        viewPlan = p.name;
+      if (cfg.view_plan !== p.name) {
+        cfg.view_plan = p.name;
+        saveConfig();
         rerender();
       }
     });
@@ -67,7 +68,7 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
   container.append(tabs);
 
   // 当前查看的方案卡片（与执行方案解耦）
-  const plan = getPlan(viewPlan ?? "");
+  const plan = getPlan(cfg.view_plan ?? "");
   if (!plan) {
     container.append(el("div", { class: "empty" }, el("div", { class: "empty-title", text: "请选择一个方案" })));
     return;
@@ -141,7 +142,7 @@ function openRenameDialog(oldName: string, rerender: () => void) {
     const plan = getPlan(oldName)!;
     plan.name = v;
     if (store.cfg.current_plan === oldName) store.cfg.current_plan = v;
-    if (viewPlan === oldName) viewPlan = v;
+    if (store.cfg.view_plan === oldName) store.cfg.view_plan = v;
     const i = store.cfg.loop_cfg.order.indexOf(oldName);
     if (i >= 0) store.cfg.loop_cfg.order[i] = v;
     saveConfig();
@@ -179,7 +180,7 @@ function openNewPlan(rerender: () => void) {
     clearErr();
     store.cfg.plans.push({ name: v, times: [] });
     store.cfg.current_plan = v;
-    viewPlan = v;
+    store.cfg.view_plan = v;
     saveConfig();
     closeModal();
     rerender();
@@ -212,8 +213,8 @@ function openDeletePlan(name: string, rerender: () => void) {
       if (cfg.current_plan === name) {
         cfg.current_plan = cfg.plans[0]?.name ?? null;
       }
-      if (viewPlan === name) {
-        viewPlan = cfg.current_plan ?? cfg.plans[0]?.name ?? null;
+      if (store.cfg.view_plan === name) {
+        store.cfg.view_plan = cfg.current_plan ?? cfg.plans[0]?.name ?? null;
       }
       if (cfg.plans.length < 2) {
         cfg.loop_cfg.enabled = false;
