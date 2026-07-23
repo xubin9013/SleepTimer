@@ -281,7 +281,7 @@ interface UpdateInfo {
 
 /** 拉取 GitHub 最新发布并比对版本，返回结构化结果（不含 UI 行为）。 */
 async function fetchUpdateInfo(): Promise<UpdateInfo> {
-  const current = (window as any).__APP_VERSION__ || store.cfg.version || "";
+  const current = store.cfg.version || (window as any).__APP_VERSION__ || "";
   const data = await api.checkUpdate();
   const tag: string = data?.tag_name || "";
   const htmlUrl: string = data?.html_url || updateHtmlUrl;
@@ -346,7 +346,9 @@ function showUpdateModal(info: UpdateInfo) {
   }
   // ★ “关闭”改为“关于”：点击打开当前版本在 GitHub 的发布页
   const normV = (v: string) => String(v || "").trim().toLowerCase().replace(/^v/, "");
-  const aboutUrl = "https://github.com/xubin9013/SleepTimer/releases/tag/v" + normV(info.current);
+  // 关于页打开发布页：GitHub tag 为「日期级」（不含当天构建次数 .N），需截断后缀避免 404
+  const dateTag = (v: string) => normV(v).split(".").slice(0, 3).join(".");
+  const aboutUrl = "https://github.com/xubin9013/SleepTimer/releases/tag/v" + dateTag(info.current);
   actions.push({
     label: "关于", cls: "btn-secondary",
     onClick: () => { closeModal(); api.openUrl(aboutUrl).catch(() => toast("无法打开链接", "error")); },

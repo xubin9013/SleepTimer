@@ -81,13 +81,14 @@ fn default_version() -> String {
     build_version()
 }
 
-/// 程序版本号：与 GitHub Release 的 tag 保持一致，作为「更新检查」的比对基准。
-/// 必须是【构建时固定注入】的版本（来自 Cargo.toml 的 package.version），
-/// 不能再按运行时日期生成——否则同一天发布新版本后，新 exe 仍按当天日期报版本，
+/// 程序版本号：完整形态为「主版本.次版本.构建日期.当天构建次数」（如 V1.0.20260723.2）。
+/// 其中构建日期 + 当天构建次数由 build.rs 在【编译期固定注入】APP_BUILD_VERSION，
+/// 不再按运行时日期生成——否则同一天发布新版本后，新 exe 仍按当天日期报版本，
 /// 永远小于已发布的 tag，导致「更新后依旧提示有新版本」。
-/// 发布新版本时：同步递增 Cargo.toml 的 version 与 GitHub Release 的 tag（两者须完全一致）。
+/// 更新比对时只取「日期级」部分（见 src/main.ts 的 norm 字符串比较，后缀 .N 不影响同天判定）。
+/// 发布新版本时：递增构建日期（Cargo.toml / tauri.conf.json 的 version 同步保持日期级 tag 一致）。
 pub fn build_version() -> String {
-    format!("V{}", env!("CARGO_PKG_VERSION"))
+    format!("V{}", env!("APP_BUILD_VERSION"))
 }
 
 impl AppConfig {
