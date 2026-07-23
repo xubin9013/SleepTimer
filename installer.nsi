@@ -45,11 +45,17 @@ FunctionEnd
 ; 仅当匹配到真正的 SleepTimer.exe 进程（计数>0）才判定为运行中。
 Function IsRunning
   StrCpy $R0 0
+  StrCpy $R9 ""  ; 命中进程的详细信息（含 PID），供弹窗展示让用户核对
   nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq SleepTimer.exe" /NH | find /I /C "SleepTimer.exe"'
   Pop $1  ; 退出码（find: 0=找到, 1=未找到）
   Pop $2  ; stdout：匹配到的 SleepTimer.exe 进程行数（如 "0" 或 "1"）
   ${If} $2 != "0"
     StrCpy $R0 1
+    ; 抓取实际进程信息（CSV 格式，第二列为 PID）用于提示
+    nsExec::ExecToStack 'cmd /c tasklist /FI "IMAGENAME eq SleepTimer.exe" /NH /FO CSV'
+    Pop $3
+    Pop $4
+    StrCpy $R9 $4
   ${EndIf}
 FunctionEnd
 
@@ -80,7 +86,7 @@ Function CheckRunningAtStart
     retry_run:
     IntOp $killRetryCount $killRetryCount + 1
     ; 三按钮：中止=退出 | 重试=再杀 | 忽略=强制继续(默认穿透)
-    MessageBox MB_ABORTRETRYIGNORE|MB_ICONEXCLAMATION "检测到 SleepTimer 正在运行。$\n「中止」退出安装 / 「重试」再尝试结束进程 / 「忽略」强制继续安装。" IDABORT do_abort IDRETRY do_kill
+    MessageBox MB_ABORTRETRYIGNORE|MB_ICONEXCLAMATION "检测到 SleepTimer 正在运行：$\n$R9$\n$\n请在任务管理器「详细信息」中按上述 PID 核对（右键托盘图标可退出）。$\n$\n「中止」退出安装 / 「重试」再尝试结束进程 / 「忽略」强制继续安装。" IDABORT do_abort IDRETRY do_kill
     ; ★ IDIGNORE（忽略）→ 穿透到此行：用户选择强制继续，最后尝试杀一次但不阻塞
     Goto do_force
     do_kill:
