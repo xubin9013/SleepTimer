@@ -81,15 +81,17 @@ fn default_version() -> String {
     build_version()
 }
 
-/// 程序版本号：完整形态为「主版本.次版本.构建日期.当天构建次数」（如 V1.0.20260723.2）。
-/// 版本号由 build.rs 在编译期生成到 generated_version.rs（含构建日期 + 当天构建次数），
-/// 通过 include! 引入——确保每次构建 build.rs 重跑后版本号随之更新。
-/// （旧方案用 env! 注入，会被 Cargo 增量缓存跳过，导致「当天构建次数」永不递增。）
-/// 不再按运行时日期生成——否则同一天发布新版本后，新 exe 仍按当天日期报版本，
-/// 永远小于已发布的 tag，导致「更新后依旧提示有新版本」。
-/// 更新比对时只取「日期级」部分（见 src/main.ts 的 norm 字符串比较，后缀 .N 不影响同天判定）。
-/// 发布新版本时：递增构建日期（Cargo.toml / tauri.conf.json 的 version 同步保持日期级 tag 一致）。
-include!("generated_version.rs");
+// 程序版本号：完整形态为「主版本.次版本.构建日期.当天构建次数」（如 V1.0.20260723.2）。
+// 版本号由 build.rs 在编译期生成到 OUT_DIR/generated_version.rs（含构建日期 + 当天构建次数），
+// 通过 include!(OUT_DIR) 引入。生成文件放在 OUT_DIR（target 内），避免落在 src 目录里
+// 触发 rerun-if-changed 自循环。
+// 升版规则（用户要求）：build.rs 会对「真正影响产物的源码」计算内容指纹；只有指纹变化
+// （即源码确有修改）时才把当天构建次数 +1。同一份源码多次构建，指纹不变 → 版本号锁定，不升版。
+// 不再按运行时日期生成——否则同一天发布新版本后，新 exe 仍按当天日期报版本，
+// 永远小于已发布的 tag，导致「更新后依旧提示有新版本」。
+// 更新比对时只取「日期级」部分（见 src/main.ts 的 norm 字符串比较，后缀 .N 不影响同天判定）。
+// 发布新版本时：递增构建日期（Cargo.toml / tauri.conf.json 的 version 同步保持日期级 tag 一致）。
+include!(concat!(env!("OUT_DIR"), "/generated_version.rs"));
 
 pub fn build_version() -> String {
     format!("V{}", APP_BUILD_VERSION)
