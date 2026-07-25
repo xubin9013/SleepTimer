@@ -50,16 +50,11 @@ fn main() {
         ),
     );
 
-    // rerun-if-changed：只监听真实源码与关键配置。生成文件在 OUT_DIR，不在此列。
-    // 关键：让 Cargo 在生成版本变化时重编译引用它的模块；
-    //       其余源码变化时 build.rs 会重跑并重算指纹，决定是否升版。
-    println!("cargo:rerun-if-changed=src");
-    println!("cargo:rerun-if-changed=src-tauri/src");
-    println!("cargo:rerun-if-changed=src-tauri/Cargo.toml");
-    println!("cargo:rerun-if-changed=src-tauri/Cargo.lock");
-    println!("cargo:rerun-if-changed=src-tauri/tauri.conf.json");
-    println!("cargo:rerun-if-changed=package.json");
-    println!("cargo:rerun-if-changed={}", gen_path.display());
+    // 注意：不声明任何 rerun-if-changed —— 这样 Cargo 每次构建都会重跑本脚本，
+    // 重新计算源码指纹与版本号。版本是否升版完全由上面的指纹逻辑决定
+    // （源码不变则 count 不变 → 同一份源码重复构建不升版；源码变了才升版）。
+    // 若不重跑，Cargo 对「目录级 rerun-if-changed」的嵌套变更检测不可靠，
+    // 会导致改了源码却没升版，违背「有修改才升版」的规则。
 
     // 调试信息，便于在构建日志中核对升/不升版决策
     eprintln!(

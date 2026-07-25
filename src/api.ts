@@ -58,6 +58,13 @@ export const api = {
   cancelCountdown: () => invoke("cancel_countdown"),
   /** 拉取当前待执行的倒计时参数（弹窗页面兜底启动用） */
   getCountdownState: () => invoke<any | null>("get_countdown_state"),
+  /** Rust侧创建通知浮窗（火绒风格桌面通知：标题/多行/类型/时长/位置） */
+  createNotifyWindow: (title: string, lines: string[], kind: string, duration_ms: number, x: number, y: number) =>
+    invoke("create_notify_window", { title, lines, kind, duration_ms, x, y }),
+  /** 取消当前通知：隐藏 notify-pool 窗口并清除待执行状态（不销毁窗口，便于复用） */
+  cancelNotify: () => invoke("cancel_notify"),
+  /** 拉取当前待执行的通知参数（通知页面兜底启动用） */
+  getNotifyState: () => invoke<any | null>("get_notify_state"),
   /** 检测更新：向 GitHub Releases 最新发布接口请求，返回发布信息 JSON */
   checkUpdate: () => invoke<any>("check_update"),
   /** 自动更新：下载安装包到临时目录并静默覆盖安装（Rust 端完成后会退出并重启程序） */

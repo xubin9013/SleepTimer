@@ -17,6 +17,7 @@ export default defineConfig({
       input: {
         main: r("index.html"),
         countdown: r("countdown.html"),
+        notify: r("notify.html"),
       },
     },
   },

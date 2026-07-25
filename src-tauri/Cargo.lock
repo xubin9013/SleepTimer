@@ -3233,7 +3233,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "sleeptimer"
-version = "1.0.20260723"
+version = "1.0.20260725"
 dependencies = [
  "chrono",
  "futures-util",

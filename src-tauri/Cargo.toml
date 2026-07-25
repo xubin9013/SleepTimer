@@ -1,6 +1,6 @@
 [package]
 name = "sleeptimer"
-version = "1.0.20260723"
+version = "1.0.20260725"
 description = "SleepTimer 定时熄屏"
 authors = ["Senior Developer"]
 edition = "2021"

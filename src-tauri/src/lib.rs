@@ -25,6 +25,10 @@ pub struct AppState {
     // 倒计时序号（单调递增）：每次新建倒计时自增，使旧的计时线程在醒来时能识别
     // "已非当前倒计时"而放弃触发熄屏，避免取消/重设后旧定时器误触发。
     pub countdown_seq: Mutex<u64>,
+    // 通知浮窗待执行状态（供事件可能错过时兜底拉取，避免"通知不显示"）。
+    pub pending_notify: Mutex<Option<serde_json::Value>>,
+    // 通知序号（单调递增）：每次新建通知自增，供弹窗页幂等/覆盖判断。
+    pub notify_seq: Mutex<u64>,
 }
 
 /// 启动一个后台线程专责写日志（行业规范格式：日期文件名 + 级别 + 组件标签）。
@@ -325,6 +329,100 @@ fn close_countdown_windows(app: tauri::AppHandle, state: tauri::State<AppState>)
     }
 }
 
+/// 预创建（或获取已有的）隐藏通知弹窗池窗口。
+/// 窗口加载 notify.html，默认隐藏、透明背景（卡片外区域透明，仅浮卡可见）。
+/// show 时通过事件接收运行时参数（标题/多行内容/类型/主题/时长）。
+fn ensure_notify_pool(app: &tauri::AppHandle) -> Result<(), String> {
+    if app.get_webview_window("notify-pool").is_some() {
+        return Ok(()); // 已存在
+    }
+    let _ = tauri::webview::WebviewWindowBuilder::new(
+        app,
+        "notify-pool",
+        tauri::WebviewUrl::App("notify.html".into()),
+    )
+    .title("SleepTimer Notify")
+    .inner_size(360.0, 190.0)
+    .decorations(false)
+    .always_on_top(true)
+    .resizable(false)
+    .skip_taskbar(true)
+    .transparent(true) // ★ 透明：浮卡外区域透明，仅圆角卡片 + 阴影可见
+    .visible(false) // ★ 隐藏：首次 show 前不显示
+    .build()
+    .map_err(|e| format!("{}", e))?;
+    Ok(())
+}
+
+/// 显示一张火绒风格桌面通知浮窗（复用预创建的隐藏 notify-pool 窗口）。
+/// 参数：标题、多行内容、类型(info/success/update/warn)、自动消失时长(ms,0=常驻)、位置。
+#[tauri::command]
+fn create_notify_window(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    title: String,
+    lines: Vec<String>,
+    kind: String,
+    duration_ms: u64,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    // 读取主程序当前主题，使通知浮窗与主程序主题一致
+    let theme = {
+        let cfg = state.config.lock().unwrap();
+        let t = cfg.settings.theme.clone();
+        if t == "light" { "light" } else { "dark" }
+    };
+
+    // 序号自增，写入参数，供弹窗页面幂等/覆盖判断（事件错过时兜底拉取也能识别最新）
+    let seq = {
+        let mut s = state.notify_seq.lock().unwrap();
+        *s += 1;
+        *s
+    };
+    let params = serde_json::json!({
+        "title": title,
+        "lines": lines,
+        "kind": kind,
+        "theme": theme,
+        "duration": duration_ms,
+        "id": seq
+    });
+    *state.pending_notify.lock().unwrap() = Some(params.clone());
+
+    let _ = state.debug_log.send(fmt_log(
+        "INFO",
+        "notify",
+        &format!("显示通知 seq={} title={} kind={} duration={} pos=({},{})", seq, title, kind, duration_ms, x, y),
+    ));
+
+    ensure_notify_pool(&app)?;
+
+    // 定位并 show（不抢焦点：通知是被动提示，不应打断用户当前操作）
+    if let Some(win) = app.get_webview_window("notify-pool") {
+        let _ = win.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: x as i32, y: y as i32 }));
+        let _ = win.show();
+    }
+
+    app.emit("notify:show", &params).map_err(|e| format!("emit failed: {}", e))?;
+    Ok(())
+}
+
+/// 取消当前通知：清除待执行状态并隐藏（不关闭）notify-pool 窗口，便于下次复用。
+#[tauri::command]
+fn cancel_notify(app: tauri::AppHandle, state: tauri::State<AppState>) {
+    *state.pending_notify.lock().unwrap() = None;
+    if let Some(win) = app.get_webview_window("notify-pool") {
+        let _ = win.hide();
+    }
+}
+
+/// 返回当前待执行的通知参数（供弹窗页面兜底拉取）。无则返回 null。
+#[tauri::command]
+fn get_notify_state(state: tauri::State<AppState>) -> Option<serde_json::Value> {
+    state.pending_notify.lock().unwrap().clone()
+}
+
 /// 检测更新：向 GitHub Releases "最新发布" 接口发起只读 GET，返回发布信息。
 /// 不下载安装，仅由前端比对版本并引导用户前往发布页。更新源即 GitHub 仓库。
 #[tauri::command]
@@ -502,6 +600,8 @@ pub fn run() {
         debug_log: debug_tx,
         pending_countdown: Mutex::new(None),
         countdown_seq: Mutex::new(0),
+        pending_notify: Mutex::new(None),
+        notify_seq: Mutex::new(0),
     };
 
     let app = tauri::Builder::default()
@@ -536,6 +636,9 @@ pub fn run() {
             cancel_countdown,
             get_countdown_state,
             close_countdown_windows,
+            create_notify_window,
+            cancel_notify,
+            get_notify_state,
             check_update,
             open_url,
             download_and_install
@@ -559,6 +662,14 @@ pub fn run() {
                     "WARN",
                     "countdown",
                     &format!("倒计时弹窗池预创建失败（将按需降级新建）: {}", e),
+                ));
+            }
+            // ★ 预创建通知弹窗池（隐藏窗口），实现火绒风格桌面通知浮窗（启动提示/通用提示）。
+            if let Err(e) = ensure_notify_pool(&app.app_handle()) {
+                let _ = app.state::<AppState>().debug_log.send(fmt_log(
+                    "WARN",
+                    "notify",
+                    &format!("通知弹窗池预创建失败（将按需降级新建）: {}", e),
                 ));
             }
             // ★ 安装全局 ESC 钩子：倒计时激活期间，无论弹窗是否聚焦，按 ESC 均可取消。

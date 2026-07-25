@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { store, loadConfig, saveConfig, getFixedPlan, getEffectivePlanName } from "./store";
 import { el, svgIcon, closeModal, modalOpen, toast, openModal } from "./ui";
 import { showCountdown, cancelCountdown, isCountdownActive } from "./countdown";
+import { showNotify } from "./notify";
 import { installDiagnostics } from "./diag";
 import { renderPlans } from "./modules/plans";
 import { renderSettings } from "./modules/settings";
@@ -262,6 +263,21 @@ async function buildMainApp() {
   document.addEventListener("contextmenu", (e) => e.preventDefault());
 
   api.logDebug("[app] 前端已加载，主界面就绪");
+
+  // ★ 启动后弹火绒风格桌面通知（显示当前版本与状态，便于用户感知新版）
+  showNotifyStartup(verStr);
+}
+
+/** 启动后延迟弹一张桌面通知，展示当前版本/状态（火绒风格）。 */
+function showNotifyStartup(ver: string) {
+  setTimeout(() => {
+    showNotify({
+      title: "SleepTimer 已启动",
+      lines: [`当前版本 ${ver}`, `熄屏方案已就绪，守护你的屏幕健康。`],
+      kind: "update",
+      duration: 6000,
+    }).catch(() => {});
+  }, 900);
 }
 
 
