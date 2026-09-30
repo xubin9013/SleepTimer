@@ -448,6 +448,8 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .pager button:hover:not(:disabled) { background: var(--bg-hover); }
 .pager button.active { background: var(--primary-500); color: #fff; border-color: var(--primary-500); }
 .pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+/* 折叠分页的省略号（…）占位：宽度与页码按钮一致（min-width:32px），保证分页区总宽恒定 */
+.pager .pager-ellipsis { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; height: 32px; color: var(--gray-500); user-select: none; }
 
 /* ---------- Dropdown ---------- */
 .dropdown { position: relative; display: inline-block; }

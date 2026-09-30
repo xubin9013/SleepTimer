@@ -221,6 +221,19 @@ function renderRunTable(card: HTMLElement, rows: RunLogRow[]) {
 
 /* ---------- 公共分页/操作 ---------- */
 
+/** 计算折叠式分页要显示的页码序列：-1 表示省略号「…」。
+ *  ★ 恒定 7 个元素（总页数 >7 时），三种布局：
+ *    贴左（当前 ≤3）：1、2、3、4、5、…、T
+ *    中间页：1、…、c-1、c、c+1、…、T
+ *    贴右（当前 ≥T-2）：1、…、T-4、T-3、T-2、T-1、T
+ *    保证「上一页/下一页」按钮位置不随换页移动（2026-09-30 用户要求）。 */
+function pageItems(current: number, total: number): number[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (current <= 3) return [1, 2, 3, 4, 5, -1, total];
+  if (current >= total - 2) return [1, -1, total - 4, total - 3, total - 2, total - 1, total];
+  return [1, -1, current - 1, current, current + 1, -1, total];
+}
+
 function buildFoot(total: number, totalPages: number): HTMLElement {
   const foot = el("div", { class: "table-foot" });
   const perSelect = el("select", { class: "dropdown-trigger" }) as HTMLSelectElement;
@@ -248,7 +261,12 @@ function buildFoot(total: number, totalPages: number): HTMLElement {
   prev.disabled = page <= 1;
   pager.append(prev);
   if (perPage !== 0) {
-    for (let p = 1; p <= totalPages; p++) {
+    // ★ 折叠式分页：只显示首页/末页/当前页邻近页，超出部分以「…」省略，避免溢出
+    for (const p of pageItems(page, totalPages)) {
+      if (p === -1) {
+        pager.append(el("span", { class: "pager-ellipsis", text: "…" }));
+        continue;
+      }
       const b = el("button", { class: "btn" + (p === page ? " active" : ""), text: String(p), onclick: () => { page = p; const card = document.getElementById("logs-card"); if (card) loadAndRender(card as HTMLElement); } });
       pager.append(b);
     }
