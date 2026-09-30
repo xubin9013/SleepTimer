@@ -104,6 +104,7 @@ export function renderSettings(container: HTMLElement, rerender: () => void) {
         if (!cfg.loop_cfg.start) cfg.loop_cfg.start = cfg.loop_cfg.granularity === "month" ? thisMonthStr() : todayStr();
       }
       saveConfig();
+      api.logOperation("切换循环执行", v ? "开启" : "关闭").catch(() => {});
       rerender();
       return true;
     })
@@ -127,7 +128,7 @@ export function renderSettings(container: HTMLElement, rerender: () => void) {
           class: "plan-chip" + (active ? " active" : ""),
           text: p.name,
           title: p.name,
-          onclick: () => { cfg.fixed_plan = p.name; saveConfig(); rerender(); },
+          onclick: () => { cfg.fixed_plan = p.name; saveConfig(); api.logOperation("选择执行方案", p.name).catch(() => {}); rerender(); },
         });
         planChips.append(b);
       }
@@ -147,6 +148,7 @@ export function renderSettings(container: HTMLElement, rerender: () => void) {
     fieldRow("随系统启动", "开机自动运行 SleepTimer", cfg.settings.autostart, (v) => {
       cfg.settings.autostart = v;
       saveConfig();
+      api.logOperation("切换随系统启动", v ? "开启" : "关闭").catch(() => {});
       api.setAutostart(v).catch(() => toast("设置自启动失败", "error"));
     })
   );
@@ -154,6 +156,7 @@ export function renderSettings(container: HTMLElement, rerender: () => void) {
     fieldRow("关闭窗口最小化到系统托盘", "点击关闭按钮隐藏到托盘而非退出", cfg.settings.minimize_to_tray, (v) => {
       cfg.settings.minimize_to_tray = v;
       saveConfig();
+      api.logOperation("切换最小化到托盘", v ? "开启" : "关闭").catch(() => {});
     })
   );
   container.append(c2);
@@ -161,31 +164,28 @@ export function renderSettings(container: HTMLElement, rerender: () => void) {
   // ---- Card 3 ----
   const c3 = el("div", { class: "card" });
   c3.append(
-    fieldRow("熄屏并锁定系统", "到达时间后同时锁定屏幕", cfg.settings.lock_on_off, (v) => {
+    fieldRow("熄屏并锁定系统", "熄屏后同时锁定电脑", cfg.settings.lock_on_off, (v) => {
       cfg.settings.lock_on_off = v;
       saveConfig();
+      api.logOperation("切换熄屏锁定", v ? "开启" : "关闭").catch(() => {});
     })
   );
-  c3.append(
-    fieldRow("熄屏前提示倒计时", "到达前弹出可取消的倒计时通知", cfg.settings.countdown_enabled, (v) => {
-      cfg.settings.countdown_enabled = v;
-      saveConfig();
-      rerender();
-    })
-  );
-  if (cfg.settings.countdown_enabled) {
+  // ★ 「熄屏前提示倒计时」开关已取消（功能与提前提示时间重复：0 秒即不弹窗）。
+  //   直接保留提前提示时间输入：0 秒不弹窗，1~10 秒弹窗。
+  {
     const numRow = el("div", { class: "field-row" });
     const num = el("input", { class: "input input-num", type: "number", value: String(cfg.settings.countdown_seconds) }) as HTMLInputElement;
-    num.min = "1"; num.max = "300";
+    num.min = "0"; num.max = "10";
     num.addEventListener("change", () => {
       let v = parseInt(num.value, 10);
       if (isNaN(v)) v = 5;
-      v = Math.max(1, Math.min(300, v));
+      v = Math.max(0, Math.min(10, v));
       num.value = String(v);
       cfg.settings.countdown_seconds = v;
       saveConfig();
+      api.logOperation("修改提前提示时间", `${v} 秒`).catch(() => {});
     });
-    numRow.append(el("div", {}, el("div", { class: "field-label", text: "提前提示时间" }), el("div", { class: "field-sub", text: "范围 1 ~ 300 秒" })), el("div", { class: "field-unit" }, num, el("span", { class: "unit-text", text: "秒" })));
+    numRow.append(el("div", {}, el("div", { class: "field-label", text: "提前提示时间" }), el("div", { class: "field-sub", text: "范围 0 ~ 10 秒，0 秒则不弹窗直接熄屏" })), el("div", { class: "field-unit" }, num, el("span", { class: "unit-text", text: "秒" })));
     c3.append(numRow);
   }
   container.append(c3);
@@ -200,6 +200,7 @@ export function renderSettings(container: HTMLElement, rerender: () => void) {
       confirmLabel: "重置",
       onConfirm: async () => {
         await api.resetAll();
+        api.logOperation("重置全部设置", "恢复初始状态").catch(() => {});
         await loadConfig();
         rerender();
         toast("已重置为初始状态", "success");
@@ -237,12 +238,14 @@ function renderLoopConfig(rerender: () => void): HTMLElement {
     // 切换到天时，如果当前start是月份格式(只有2段)，重置为今天
     if (!lc.start || lc.start.split("-").length < 3) lc.start = todayStr();
     saveConfig(); rerender();
+    api.logOperation("修改间隔单位", "天").catch(() => {});
   });
   gMonth.addEventListener("click", () => {
     lc.granularity = "month";
     // 切换到月时，如果当前start是日期格式(有3段)，重置为本月
     if (!lc.start || lc.start.split("-").length >= 3) lc.start = thisMonthStr();
     saveConfig(); rerender();
+    api.logOperation("修改间隔单位", "月").catch(() => {});
   });
 
   // 间隔（前加"间隔时间"标签）
@@ -256,6 +259,7 @@ function renderLoopConfig(rerender: () => void): HTMLElement {
     lc.interval = v;
     saveConfig();
     rerender();
+    api.logOperation("修改循环间隔", `${v} ${lc.granularity === "month" ? "月" : "天"}`).catch(() => {});
   });
 
   // 开始日期/月份（前加动态标签"开始日期"/"开始月份"，宽度严格自适应内容）
@@ -268,6 +272,7 @@ function renderLoopConfig(rerender: () => void): HTMLElement {
       lc.start = v;
       saveConfig();
       rerender();
+      api.logOperation(lc.granularity === "month" ? "修改开始月份" : "修改开始日期", lc.granularity === "month" ? fmtMonth(v) : fmtDate(v)).catch(() => {});
     });
   });
 
@@ -311,6 +316,7 @@ function renderOrderSection(wrap: HTMLElement, cfg: any, lc: any, rerender: () =
       if (lc.order.length <= 2) { showInlineError(orderErr, "循环至少需要 2 个方案"); return; }
       lc.order = lc.order.filter((n: string) => n !== name);
       saveConfig();
+      api.logOperation("调整循环顺序", `移除「${name}」`).catch(() => {});
       rerender();
     });
     orderList.append(pill);
@@ -324,7 +330,7 @@ function renderOrderSection(wrap: HTMLElement, cfg: any, lc: any, rerender: () =
         text: p.name,
         title: `点击将「${p.name}」加入循环序列`,
       });
-      pill.addEventListener("click", () => { lc.order.push(p.name); saveConfig(); rerender(); });
+      pill.addEventListener("click", () => { lc.order.push(p.name); saveConfig(); api.logOperation("调整循环顺序", `加入「${p.name}」`).catch(() => {}); rerender(); });
       orderList.append(pill);
     }
   }
@@ -477,6 +483,7 @@ function enableReorder(listEl: HTMLElement, orderArr: string[], rerender: () => 
     orderArr.length = 0;
     orderArr.push(...names);
     saveConfig();
+    api.logOperation("调整循环顺序", names.join(" → ")).catch(() => {});
     suppressOrderClick = true;
     window.setTimeout(() => { suppressOrderClick = false; }, 300);
     rerender();
@@ -550,7 +557,6 @@ function renderTimeline(): HTMLElement {
     start = parts[0] + "-" + parts[1]; // 截取年-月
   }
   const [sy, sm, sd] = start.split("-").map(Number);
-  const today = lc.granularity === "month" ? thisMonthStr() : todayStr();
 
   // ★ 计算当前处于循环的第几个位置（与 store.computeLoopCurrent 同逻辑）
   let currentIndex = 0;
@@ -570,43 +576,29 @@ function renderTimeline(): HTMLElement {
     }
   }
 
-  // ★ 从当前位置开始渲染：第1张=当前执行方案，后续依次为下一个方案执行日期
+  // ★ 从「当前周期」开始渲染：第1张=当前周期（当天/当月）+当前执行方案，
+  //   后续依次为下一个周期 + 循环中的下一个方案。
+  //   （修复：此前日期锚定在「开始日期」，当前是 9 月时第一张仍显示开始月份 7 月。）
+  const interval = Math.max(lc.interval, 1);
+  const now = new Date();
   for (let step = 0; step < Y; step++) {
     const planIdx = (currentIndex + step) % Y;
     const planName = lc.order[planIdx];
     let dateLabel: string;
-    let isToday = false;
 
-    if (step === 0) {
-      // 当前执行方案
-      if (lc.granularity === "month") {
-        const [cy, cm] = [sy + Math.floor((sm - 1 + currentIndex * lc.interval) / 12), ((sm - 1 + currentIndex * lc.interval) % 12) + 1];
-        dateLabel = `${cy}年${cm}月`;
-        isToday = `${cy}-${pad(cm)}` === today;
-      } else {
-        const d = new Date(sy, sm - 1, sd + currentIndex * lc.interval);
-        dateLabel = `${d.getMonth() + 1}月${d.getDate()}日`;
-        isToday = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` === today;
-      }
-      tl.append(node(dateLabel, planName, true, isToday)); // 当前：绿色环标记，无"· 当前"文字
+    if (lc.granularity === "month") {
+      // 以当前月为锚点：+ step*interval 个月
+      const total = (now.getFullYear() - 1) * 12 + now.getMonth() + step * interval;
+      const yy = Math.floor(total / 12) + 1;
+      const mm = (total % 12) + 1;
+      dateLabel = `${yy}年${mm}月`;
     } else {
-      // 未来方案
-      if (lc.granularity === "month") {
-        const absIndex = currentIndex + step;
-        const total = (sy - 1) * 12 + (sm - 1) + absIndex * lc.interval;
-        const yy = Math.floor(total / 12) + 1;
-        const mm = (total % 12) + 1;
-        dateLabel = `${yy}年${mm}月`;
-        isToday = `${yy}-${pad(mm)}` === today;
-        tl.append(node(dateLabel, planName, false, isToday));
-      } else {
-        const d = new Date(sy, sm - 1, sd + (currentIndex + step) * lc.interval);
-        dateLabel = `${d.getMonth() + 1}月${d.getDate()}日`;
-        const ds = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-        isToday = ds === today;
-        tl.append(node(dateLabel, planName, false, isToday));
-      }
+      // 以今天为锚点：+ step*interval 天
+      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + step * interval);
+      dateLabel = `${d.getMonth() + 1}月${d.getDate()}日`;
     }
+    // 第 1 张：当前周期 + 当前执行方案 → 绿色环标记 + today 高亮；后续张均为未来周期
+    tl.append(node(dateLabel, planName, step === 0, step === 0));
     // 每个卡片之间（含当前）加右箭头，末尾接循环图标
     if (step < Y - 1) tl.append(el("span", { class: "tl-arrow", html: svgIcon("chevron-right").outerHTML }));
   }

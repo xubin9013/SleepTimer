@@ -11,27 +11,27 @@ const pad = (n: number) => String(n).padStart(2, "0");
 export function renderPlans(container: HTMLElement, rerender: () => void) {
   container.innerHTML = "";
   const cfg = store.cfg;
-  const addBtn = el("button", { class: "btn btn-primary", onclick: () => openNewPlan(rerender) }, svgIcon("plus"), "新建方案");
   const head = el(
     "div",
-    { class: "page-head", style: "display:flex;align-items:center;justify-content:space-between" },
+    { class: "page-head" },
     el(
       "div",
       {},
       el("h2", { class: "page-title", text: "方案管理" }),
       el("p", { class: "page-desc", text: "管理你的定时熄屏方案" })
-    ),
-    addBtn
+    )
   );
   container.append(head);
 
   if (cfg.plans.length === 0) {
+    // 无任何方案时的兜底创建入口（新建方案按钮已从页头移除，仅空状态保留）
     const empty = el(
       "div",
       { class: "empty" },
       el("div", { html: svgIcon("grid").outerHTML }),
       el("div", { class: "empty-title", text: "暂无方案" }),
-      el("div", { class: "empty-desc", text: "点击上方的 + 按钮创建第一个熄屏时间方案" })
+      el("div", { class: "empty-desc", text: "点击下方按钮创建第一个熄屏时间方案" }),
+      el("button", { class: "btn btn-primary", style: "margin-top:var(--space-4)", onclick: () => openNewPlan(rerender) }, svgIcon("plus"), "新建方案")
     );
     container.append(empty);
     return;
@@ -75,22 +75,13 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
   }
   const card = el("div", { class: "card" });
 
-  // 方案名称行 + 添加时间按钮（同行右侧）
+  // 方案名称行（添加时间按钮已移除，改用时间标签行末尾的圆圈 + 按钮）
   const nameRow = el("div", { class: "plan-name-row" });
   const nameLabel = el("span", { class: "plan-name", text: plan.name, title: "双击重命名" });
   // 双击方案名称弹出重命名弹窗
   nameLabel.style.cursor = "pointer";
   nameLabel.addEventListener("dblclick", () => openRenameDialog(plan.name, rerender));
-  const addTime = el("button", { class: "btn btn-secondary btn-sm", onclick: () => openTimePicker(null).then((v) => {
-    if (v == null) return;
-    if (plan.times.includes(v)) { toast("该时间点已存在", "error"); return; }
-    plan.times.push(v);
-    plan.times = sortTimes(plan.times);
-    saveConfig();
-    rerender();
-  }) });
-  addTime.append(svgIcon("plus"), document.createTextNode("添加时间"));
-  nameRow.append(nameLabel, addTime);
+  nameRow.append(nameLabel);
   card.append(nameRow);
 
   const sub = el("p", { class: "card-desc", text: `共 ${plan.times.length} 个熄屏时间点，单击时间可修改` });
@@ -99,7 +90,8 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
   const pills = el("div", { class: "time-pills" });
   const sorted = sortTimes(plan.times);
   if (sorted.length === 0) {
-    pills.append(el("span", { class: "card-desc", text: "尚未添加时间点" }));
+    // margin:0 —— card-desc 自带 margin-bottom，会使 align-self:center 的居中基准（margin box）偏上
+    pills.append(el("span", { class: "card-desc", style: "margin:0;align-self:center", text: "尚未添加时间点" }));
   }
   for (const t of sorted) {
     const pill = el("div", { class: "time-pill", text: t });
@@ -108,6 +100,7 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
       e.stopPropagation();
       plan.times = plan.times.filter((x) => x !== t);
       saveConfig();
+      api.logOperation("删除时间点", `${plan.name} · ${t}`).catch(() => {});
       rerender();
     });
     pill.append(px);
@@ -118,10 +111,23 @@ export function renderPlans(container: HTMLElement, rerender: () => void) {
       plan.times.push(v);
       plan.times = sortTimes(plan.times);
       saveConfig();
+      api.logOperation("修改时间点", `${plan.name} · ${t} → ${v}`).catch(() => {});
       rerender();
     }));
     pills.append(pill);
   }
+  // 圆圈 + 号：添加时间（位于最后一个时间标签之后，样式同方案标签旁的 + 圆钮）
+  const addTime = el("button", { class: "time-pill-add", html: svgIcon("plus").outerHTML, title: "添加时间" });
+  addTime.addEventListener("click", () => openTimePicker(null).then((v) => {
+    if (v == null) return;
+    if (plan.times.includes(v)) { toast("该时间点已存在", "error"); return; }
+    plan.times.push(v);
+    plan.times = sortTimes(plan.times);
+    saveConfig();
+    api.logOperation("添加时间点", `${plan.name} · ${v}`).catch(() => {});
+    rerender();
+  }));
+  pills.append(addTime);
   card.append(pills);
   container.append(card);
 }
@@ -136,8 +142,8 @@ function openRenameDialog(oldName: string, rerender: () => void) {
   const submit = () => {
     const v = input.value.trim().slice(0, 10);
     if (v === oldName) { closeModal(); return; }
-    if (v.length === 0) { showErr("方案名称不能为空"); return; }
-    if (store.cfg.plans.some((p) => p.name === v)) { showErr("方案名称已存在"); return; }
+    if (v.length === 0) { showErr("方案名称不能为空"); input.focus(); return; }
+    if (store.cfg.plans.some((p) => p.name === v)) { showErr("方案名称已存在"); input.focus(); return; }
     clearErr();
     const plan = getPlan(oldName)!;
     plan.name = v;
@@ -146,6 +152,7 @@ function openRenameDialog(oldName: string, rerender: () => void) {
     const i = store.cfg.loop_cfg.order.indexOf(oldName);
     if (i >= 0) store.cfg.loop_cfg.order[i] = v;
     saveConfig();
+    api.logOperation("重命名方案", `${oldName} → ${v}`).catch(() => {});
     closeModal();
     rerender();
   };
@@ -175,13 +182,14 @@ function openNewPlan(rerender: () => void) {
   };
   const submit = () => {
     const v = input.value.trim().slice(0, 10);
-    if (v.length === 0) { showErr("方案名称不能为空"); return; }
-    if (store.cfg.plans.some((p) => p.name === v)) { showErr("方案名称已存在"); return; }
+    if (v.length === 0) { showErr("方案名称不能为空"); input.focus(); return; }
+    if (store.cfg.plans.some((p) => p.name === v)) { showErr("方案名称已存在"); input.focus(); return; }
     clearErr();
     store.cfg.plans.push({ name: v, times: [] });
     store.cfg.fixed_plan = v;
     store.cfg.view_plan = v;
     saveConfig();
+    api.logOperation("新建方案", v).catch(() => {});
     closeModal();
     rerender();
   };
@@ -221,6 +229,7 @@ function openDeletePlan(name: string, rerender: () => void) {
         cfg.loop_cfg.order = [];
       }
       saveConfig();
+      api.logOperation("删除方案", name).catch(() => {});
       rerender();
     },
   });

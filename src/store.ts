@@ -50,8 +50,9 @@ export async function loadConfig() {
 }
 
 export async function saveConfig() {
+  // ★ 运行日志不记录配置保存：用户操作已由操作日志（operation.log）的 logOperation 详细记录，
+  //   配置持久化属内部机制、非用户行为，不应在运行日志刷「配置已保存」（易与操作日志重复、且无审计价值）。
   await api.saveConfig(cfg);
-  await api.logInfo("[config] 配置已保存");
 }
 
 export function getPlan(name: string): Plan | undefined {

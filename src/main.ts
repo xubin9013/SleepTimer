@@ -3,7 +3,6 @@ import { listen } from "@tauri-apps/api/event";
 import { store, loadConfig, saveConfig, getFixedPlan, getEffectivePlanName } from "./store";
 import { el, svgIcon, closeModal, modalOpen, toast, openModal } from "./ui";
 import { showCountdown, cancelCountdown, isCountdownActive } from "./countdown";
-import { showNotify } from "./notify";
 import { installDiagnostics } from "./diag";
 import { renderPlans } from "./modules/plans";
 import { renderSettings } from "./modules/settings";
@@ -43,7 +42,8 @@ function buildShell() {
   const spacer = el("div", { class: "drag", "data-tauri-drag-region": "" });
 
   pill = el("div", { class: "pill" });
-  pill.addEventListener("click", () => setModule("settings"));
+  // ★ 仅用于展示当前执行方案名称，不响应点击（取消跳转设置页）
+  pill.style.cursor = "default";
 
   themeBtn = el("button", { class: "icon-btn", title: "切换主题", onclick: toggleTheme });
   const offBtn = el("button", { class: "btn-off", onclick: oneClickOff }, svgIcon("power"), "一键熄屏");
@@ -59,7 +59,7 @@ function buildShell() {
   const defs = [
     { mod: "plans", icon: "grid", label: "方案管理" },
     { mod: "settings", icon: "settings", label: "设置" },
-    { mod: "logs", icon: "file-text", label: "熄屏日志" },
+    { mod: "logs", icon: "file-text", label: "日志" },
   ];
   navItems = [];
   for (const d of defs) {
@@ -133,15 +133,30 @@ function toggleTheme() {
   const newTheme = store.cfg.settings.theme === "dark" ? "light" : "dark";
   store.cfg.settings.theme = newTheme;
   saveConfig();
+  api.logOperation("切换主题", newTheme === "dark" ? "暗色" : "亮色").catch(() => {});
   updateThemeBtn();
-  // 即时切换：直接修改 data-theme，所有元素在同一绘制帧内更新颜色，
-  // 消除 CSS transition + GPU 合成层异步重绘导致的"部分元素滞后"问题。
-  document.documentElement.setAttribute("data-theme", newTheme);
+  // ★ 主题切换统一瞬时生效：临时禁用全部 transition，切换后下一帧恢复，
+  //   消除部分标签/按钮/文本因 transition 产生的「颜色渐变滞后」。
+  const root = document.documentElement;
+  root.style.setProperty("--theme-switching", "1");
+  root.classList.add("theme-switching");
+  root.setAttribute("data-theme", newTheme);
+  // ★ 广播新主题给倒计时/通知弹窗池，使其主题实时跟随（消除弹窗切换滞后/首显闪烁）
+  api.emitThemeChanged(newTheme).catch(() => {});
+  // 下一帧移除禁用标记，恢复正常的 hover 过渡
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    root.classList.remove("theme-switching");
+  }));
 }
 
 async function oneClickOff() {
+  // 立即失焦：熄屏唤醒后焦点不再停留在一键熄屏按钮上（避免误按 Enter/Space 再次触发）
+  (document.activeElement as HTMLElement | null)?.blur();
   const s = store.cfg.settings;
-  api.logInfo(`[ui] 一键熄屏触发 lock=${s.lock_on_off} countdown_enabled=${s.countdown_enabled} countdown_seconds=${s.countdown_seconds}`).catch(() => {});
+  // 兼容旧配置：倒计时秒数钳制到 0~10（0 = 不弹窗直接熄屏）
+  const cd = Math.max(0, Math.min(10, s.countdown_seconds || 0));
+  api.logInfo(`[ui] 一键熄屏触发 lock=${s.lock_on_off} countdown_seconds=${cd}`).catch(() => {});
+  api.logOperation("一键熄屏", `锁定=${s.lock_on_off} 倒计时=${cd}s`).catch(() => {});
   const doOff = async () => {
     try {
       api.logDebug("[ui] 执行 triggerScreenoff 调用").catch(() => {});
@@ -153,11 +168,12 @@ async function oneClickOff() {
       toast("熄屏失败：" + errMsg, "error");
     }
   };
-  if (s.countdown_enabled) {
-    api.logDebug(`[ui] 倒计时已启用，调用 showCountdown(${s.countdown_seconds})`).catch(() => {});
-    showCountdown(s.countdown_seconds, { lock: s.lock_on_off, trigger: "manual", onFinished: doOff });
+  // ★ 倒计时是否弹窗完全由「提前提示时间」决定：>0 弹窗，0 直接熄屏（已取消独立开关）
+  if (cd > 0) {
+    api.logDebug(`[ui] 提前提示 ${cd}s，调用 showCountdown(${cd})`).catch(() => {});
+    showCountdown(cd, { lock: s.lock_on_off, trigger: "manual", onFinished: doOff });
   } else {
-    api.logDebug("[ui] 倒计时未启用，直接执行熄屏").catch(() => {});
+    api.logDebug("[ui] 提前提示 0 秒，直接执行熄屏").catch(() => {});
     doOff();
   }
 }
@@ -175,66 +191,9 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-/** 计算当前时间到目标 "HH:MM:SS" 的剩余秒数（跨日顺延至次日），无效返回 -1 */
-function secondsToTarget(t: string, now: Date): number {
-  const parts = t.split(":").map(Number);
-  if (parts.length !== 3) return -1;
-  const [h, m, s] = parts;
-  const target = new Date(now);
-  target.setHours(h, m, s, 0);
-  let diff = Math.floor((target.getTime() - now.getTime()) / 1000);
-  if (diff < 0) diff += 86400; // 目标时间已过当日，顺延至次日
-  return diff;
-}
-
-function startScheduler() {
-  // 记录已触发的 (方案#目标时间)，避免每秒重复触发
-  const fired = new Set<string>();
-  window.setInterval(() => {
-    const now = new Date();
-    const planName = getEffectivePlanName();
-    const plan = planName ? store.cfg.plans.find((p) => p.name === planName) : undefined;
-    if (!plan) return;
-    const s = store.cfg.settings;
-    // 提前量：倒计时应在“设定时间前 lead 秒”弹出；若用户晚于该时刻才设置方案，
-    // 则立即弹出，倒计时秒数 = 剩余到设定时间的秒数，仍精确在设定时间熄屏。
-    const lead = s.countdown_enabled ? Math.min(300, Math.max(1, s.countdown_seconds)) : 0;
-
-    for (const t of plan.times) {
-      const remaining = secondsToTarget(t, now);
-      if (remaining < 0) continue;
-      // 仅在“已进入提前窗口（remaining <= lead）”时触发，且只触发一次
-      if (remaining > lead) continue;
-      const key = `${planName}#${t}`;
-      if (fired.has(key)) continue;
-      fired.add(key);
-      const cd = Math.max(1, remaining); // 实际倒计时秒数（晚设方案时 < lead）
-      api
-        .logInfo(
-          `[scheduler] 触发倒计时 方案=${planName} 目标=${t} 提前量=${lead}s 实际倒计时=${cd}s (剩余=${remaining}s)`
-        )
-        .catch(() => {});
-      const doOff = async () => {
-        try {
-          api.logInfo("[scheduler] 倒计时结束，执行 triggerScreenoff(timer)").catch(() => {});
-          await api.triggerScreenoff(s.lock_on_off, "timer");
-          api.logDebug("[scheduler] triggerScreenoff(timer) 成功").catch(() => {});
-        } catch (e) {
-          api.logError(`[scheduler] triggerScreenoff(timer) 失败: ${String(e)}`).catch(() => {});
-        }
-      };
-      // 在设定时间前 lead 秒（或更早，若方案设置较晚）弹出倒计时，倒计时结束（即设定时间）执行熄屏
-      if (s.countdown_enabled) {
-        api.logDebug(`[scheduler] 调用 showCountdown(${cd}, {trigger:"timer"})`).catch(() => {});
-        showCountdown(cd, { lock: s.lock_on_off, trigger: "timer", onFinished: doOff });
-      } else {
-        api.logDebug("[scheduler] 倒计时未启用，直接执行熄屏").catch(() => {});
-        doOff();
-      }
-    }
-    if (fired.size > 500) fired.clear();
-  }, 1000);
-}
+// ★ 定时调度已迁移至后端 Rust 线程（src-tauri/src/scheduler.rs）。
+//   原先的 startScheduler / secondsToTarget（依赖前端 setInterval）会因主窗口隐藏被
+//   WebView2 后台节流，导致 5s 触发窗口被错过、定期熄屏偶尔不触发。现由后端线程权威调度。
 
 async function init() {
   // 倒计时弹窗已独立为 countdown.html（轻量页面，不加载主程序包），
@@ -254,7 +213,9 @@ async function buildMainApp() {
   buildShell();
   if (info) versionEl.textContent = verStr;
   render();
-  startScheduler();
+
+  // ★ 定时调度已迁移到后端 Rust 线程（src-tauri/src/scheduler.rs），
+  //   不再依赖前端 setInterval，避免主窗口隐藏时被 WebView2 后台节流导致漏触发。
 
   // ★ 启动后静默检查更新：仅在有更新时点亮版本号红点提醒，不弹窗、不报错
   autoCheckUpdate();
@@ -264,22 +225,8 @@ async function buildMainApp() {
 
   api.logDebug("[app] 前端已加载，主界面就绪");
 
-  // ★ 启动后弹火绒风格桌面通知（显示当前版本与状态，便于用户感知新版）
-  showNotifyStartup(verStr);
+  // ★ 启动桌面通知已按需求取消（2026-09-30）：不再弹"SleepTimer 已启动"浮窗。
 }
-
-/** 启动后延迟弹一张桌面通知，展示当前版本/状态（火绒风格）。 */
-function showNotifyStartup(ver: string) {
-  setTimeout(() => {
-    showNotify({
-      title: "SleepTimer 已启动",
-      lines: [`当前版本 ${ver}`, `熄屏方案已就绪，守护你的屏幕健康。`],
-      kind: "update",
-      duration: 6000,
-    }).catch(() => {});
-  }, 900);
-}
-
 
 /** 点亮/熄灭版本号红点（提醒有新版本） */
 function showUpdateDot() { versionEl?.classList.add("has-update"); }

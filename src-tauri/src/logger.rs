@@ -22,6 +22,7 @@ pub struct AppLogger {
     base: String,
     file: Option<File>,
     size: u64,
+    last_line: Option<String>, // 上一行内容：用于「同一时间点同一事件」去重
 }
 
 impl AppLogger {
@@ -32,6 +33,7 @@ impl AppLogger {
             base: base.to_string(),
             file: None,
             size: 0,
+            last_line: None,
         };
         logger.ensure();
         logger
@@ -93,6 +95,13 @@ impl AppLogger {
 
     /// 写入一行格式化日志。外部应经 fmt_log() 统一格式化后传入。
     pub fn write_line(&mut self, line: &str) {
+        // ★ 去重规则：相邻且内容完全相同的行只记录一次。
+        //   行内嵌毫秒级时间戳 ⇒ 完全相同 ⇒ 同一毫秒内的重复事件（如托盘 Down/Up 双发），
+        //   符合「同一时间点同一事件只记一次」；不同时间点的相同事件不受影响（时间戳不同）。
+        if self.last_line.as_deref() == Some(line) {
+            return;
+        }
+        self.last_line = Some(line.to_string());
         self.ensure();
         let line_bytes = line.as_bytes().len() as u64;
         // 即将超过上限则先滚动（活跃文件若已超 5MB，首行也会触发滚动）

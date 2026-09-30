@@ -19,18 +19,23 @@ extern "system" {
 /// hung / unresponsive window cannot block the broadcast forever and freeze the app.
 #[cfg(windows)]
 pub fn screen_off(lock: bool) -> Result<(), String> {
+    // 测试模式：设置环境变量 SLEEPTIMER_DRYRUN 时，仅写日志、不真正关闭显示器/锁定，
+    // 便于本地验证调度与熄屏记录而不会被黑屏打断。正式运行（无该环境变量）行为不变。
+    let dry_run = std::env::var("SLEEPTIMER_DRYRUN").is_ok();
     unsafe {
-        SendMessageTimeoutW(
-            HWND_BROADCAST,
-            WM_SYSCOMMAND,
-            SC_MONITORPOWER as WPARAM,
-            2 as LPARAM,
-            SMTO_ABORTIFHUNG | SMTO_NOTIMEOUTIFNOTHUNG,
-            2000,
-            std::ptr::null_mut(),
-        );
-        if lock {
-            LockWorkStation();
+        if !dry_run {
+            SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SYSCOMMAND,
+                SC_MONITORPOWER as WPARAM,
+                2 as LPARAM,
+                SMTO_ABORTIFHUNG | SMTO_NOTIMEOUTIFNOTHUNG,
+                2000,
+                std::ptr::null_mut(),
+            );
+            if lock {
+                LockWorkStation();
+            }
         }
     }
     Ok(())

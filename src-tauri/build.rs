@@ -4,6 +4,14 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 fn main() {
+    // ★ 前端源码变化时强制重跑本脚本。
+    //   否则前端改动只会触发 tauri-codegen 重新嵌入资源（它自带 dep-info 跟踪），
+    //   build 脚本本身不重跑 → 版本指纹永不重算 → 前端改动不升版（2026-09-30 实测踩坑）。
+    println!("cargo:rerun-if-changed=../src");
+    println!("cargo:rerun-if-changed=../index.html");
+    println!("cargo:rerun-if-changed=../vite.config.ts");
+    println!("cargo:rerun-if-changed=../package.json");
+
     // Tauri 资源/配置处理（必须调用，否则 generate_context! 找不到资源）
     tauri_build::build();
 
@@ -15,7 +23,11 @@ fn main() {
 
     // 源码指纹：仅纳入「真正影响产物的源文件/目录」。
     // 设计目标（用户要求）：同一份源码多次构建，版本号不升版；只有源码发生实际修改才升版。
-    let signature = compute_signature(&manifest);
+    // ★ 基准目录修正：CARGO_MANIFEST_DIR 指向 src-tauri，项目根为其上级目录。
+    //   此前误把 manifest 当根，导致前端 src/、Cargo.toml、tauri.conf.json、package.json
+    //   的哈希路径全部不存在而被静默跳过，前端改动不会升版。
+    let root = manifest.parent().unwrap_or(manifest.as_path()).to_path_buf();
+    let signature = compute_signature(&root);
 
     // 历史状态：优先读 .build_state；首次迁移时从旧的 .build_count 取基准计数。
     let state_path = target_dir.join(".build_state");
@@ -65,14 +77,14 @@ fn main() {
 
 /// 计算「源码指纹」：对真正影响产物的源目录与关键配置文件做内容哈希。
 /// node_modules / dist / target / .git / generated_version.rs 等均排除。
-fn compute_signature(manifest: &Path) -> u64 {
+fn compute_signature(root: &Path) -> u64 {
     let mut h = DefaultHasher::new();
-    dir_signature(&manifest.join("src"), &mut h); // 前端源码（TS/Vite）
-    dir_signature(&manifest.join("src-tauri").join("src"), &mut h); // Rust 源码
-    hash_file(&manifest.join("src-tauri").join("Cargo.toml"), &mut h);
-    hash_file(&manifest.join("src-tauri").join("Cargo.lock"), &mut h);
-    hash_file(&manifest.join("src-tauri").join("tauri.conf.json"), &mut h);
-    hash_file(&manifest.join("package.json"), &mut h);
+    dir_signature(&root.join("src"), &mut h); // 前端源码（TS/Vite）
+    dir_signature(&root.join("src-tauri").join("src"), &mut h); // Rust 源码
+    hash_file(&root.join("src-tauri").join("Cargo.toml"), &mut h);
+    hash_file(&root.join("src-tauri").join("Cargo.lock"), &mut h);
+    hash_file(&root.join("src-tauri").join("tauri.conf.json"), &mut h);
+    hash_file(&root.join("package.json"), &mut h);
     h.finish()
 }
 

@@ -61,7 +61,6 @@ Function IsRunning
 FunctionEnd
 
 ; ---- 强制结束运行中的 SleepTimer（三管齐下：taskkill + WMIC + 窗口标题匹配）----
-Var killRetryCount
 Function KillRunning
   ; 方法 1: taskkill 强杀（覆盖两种命名，/T 杀子进程树）
   nsExec::ExecToStack 'taskkill /F /T /IM SleepTimer.exe'
@@ -75,34 +74,27 @@ Function KillRunning
   Sleep 300
 FunctionEnd
 
-; ---- 安装启动：检测 → 提示 → 强制杀 → 重试/强制继续/取消 ----
+; ---- 安装启动：检测 → 提示（确定/继续=自动结束进程后继续安装，取消=退出安装）----
 Function CheckRunningAtStart
   ${If} ${Silent}
     Call KillRunning
     Return
   ${EndIf}
-  StrCpy $killRetryCount 0
   Call IsRunning
   ${If} $R0 == 1
-    retry_run:
-    IntOp $killRetryCount $killRetryCount + 1
-    ; 三按钮：中止=退出 | 重试=再杀 | 忽略=强制继续(默认穿透)
-    MessageBox MB_ABORTRETRYIGNORE|MB_ICONEXCLAMATION "检测到 SleepTimer 正在运行（互斥体确认）。$\n$\n「中止」退出安装 / 「重试」再尝试结束进程 / 「忽略」强制继续安装。" IDABORT do_abort IDRETRY do_kill
-    ; ★ IDIGNORE（忽略）→ 穿透到此行：用户选择强制继续，最后尝试杀一次但不阻塞
-    Goto do_force
-    do_kill:
+    ask_run:
+    ; 两按钮（系统本地化为「确定/取消」）：确定=自动结束进程并继续安装；取消=中止安装
+    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "检测到 SleepTimer 正在运行。$\n$\n点击「确定」将自动结束程序进程并继续安装；点击「取消」退出安装。" IDOK kill_and_go IDCANCEL abort_install
+    kill_and_go:
       Call KillRunning
-      Sleep 500
+      Sleep 800
       Call IsRunning
       ${If} $R0 == 1
-        Goto retry_run
+        ; 进程结束失败（极少见），再次询问：继续重试或退出
+        Goto ask_run
       ${EndIf}
       Return
-    do_force:
-      ; 用户选择强制继续：再尝试杀一次但不阻塞
-      Call KillRunning
-      Return
-    do_abort:
+    abort_install:
       Abort
   ${EndIf}
 FunctionEnd

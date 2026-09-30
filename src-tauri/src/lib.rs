@@ -1,10 +1,12 @@
 mod logger;
 mod models;
 mod platform;
+mod scheduler;
 
 use logger::{AppLogger, fmt_log, fmt_log_simple};
 use models::*;
 use std::path::PathBuf;
+use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::Mutex;
 use std::thread;
@@ -19,6 +21,8 @@ pub struct AppState {
     // 日志改为 mpsc 通道 + 后台线程写盘：日志失败/阻塞绝不会影响熄屏主流程
     pub off_log: mpsc::Sender<String>,
     pub debug_log: mpsc::Sender<String>,
+    // 用户操作审计日志（operation.log，行业规范：审计与诊断分离，审计记录长期保留）
+    pub op_log: mpsc::Sender<String>,
     // 当前待执行/进行中的倒计时参数（弹窗池窗口的运行时状态）。
     // 用于事件可能错过时的兜底拉取，避免"弹窗不显示倒计时"。
     pub pending_countdown: Mutex<Option<serde_json::Value>>,
@@ -29,6 +33,10 @@ pub struct AppState {
     pub pending_notify: Mutex<Option<serde_json::Value>>,
     // 通知序号（单调递增）：每次新建通知自增，供弹窗页幂等/覆盖判断。
     pub notify_seq: Mutex<u64>,
+    // 后端定时调度去重集合（按「方案#时间」），跨天清空。
+    pub scheduler_fired: Mutex<HashSet<String>>,
+    // 后端调度去重集合所对应的日期（用于跨天重置）。
+    pub scheduler_day: Mutex<String>,
 }
 
 /// 启动一个后台线程专责写日志（行业规范格式：日期文件名 + 级别 + 组件标签）。
@@ -62,9 +70,22 @@ fn get_app_info() -> serde_json::Value {
 }
 
 #[tauri::command]
-fn save_config(state: tauri::State<AppState>, cfg: AppConfig) -> Result<(), String> {
+fn save_config(app: tauri::AppHandle, state: tauri::State<AppState>, cfg: AppConfig) -> Result<(), String> {
+    // ★ 主题变化时广播 theme:changed：倒计时/通知弹窗池常驻复用，切主题后需实时跟随。
+    //   后端权威广播，覆盖「弹窗正显示时切主题」等前端 emit 可能漏达的场景。
+    let theme_changed = {
+        let prev = state.config.lock().unwrap().settings.theme.clone();
+        prev != cfg.settings.theme
+    };
     models::save_config(&cfg)?;
     *state.config.lock().unwrap() = cfg;
+    if theme_changed {
+        let theme = {
+            let t = state.config.lock().unwrap().settings.theme.clone();
+            if t == "light" { "light" } else { "dark" }
+        };
+        let _ = app.emit("theme:changed", serde_json::json!({ "theme": theme }));
+    }
     Ok(())
 }
 
@@ -82,8 +103,22 @@ fn log(state: tauri::State<AppState>, level: String, message: String) {
     let _ = state.debug_log.send(fmt_log_simple(&level, &message));
 }
 
+/// 记录一条用户操作审计日志（operation.log，行业规范：action + detail 结构化）。
+/// 操作日志与运行日志分离——运行日志 5MB 自动滚动丢弃，操作日志长期保留用于审计。
+#[tauri::command]
+fn log_operation(state: tauri::State<AppState>, action: String, detail: String) -> Result<(), String> {
+    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let line = serde_json::json!({ "time": ts, "action": action, "detail": detail }).to_string();
+    let _ = state.op_log.send(line);
+    // 同时在运行日志留一条 INFO 便于串联诊断（非必须，但利于排查）
+    let _ = state
+        .debug_log
+        .send(fmt_log("INFO", "op", &format!("{} | {}", action, detail)));
+    Ok(())
+}
+
 /// 将熄屏触发类型映射为中文，用于 screenoff 日志记录
-fn reason_cn(trigger: &str) -> &str {
+pub(crate) fn reason_cn(trigger: &str) -> &str {
     match trigger {
         "manual" => "手动",
         "timer" => "定时",
@@ -94,18 +129,24 @@ fn reason_cn(trigger: &str) -> &str {
 
 #[tauri::command]
 fn trigger_screenoff(state: tauri::State<AppState>, lock: bool, trigger: String) -> Result<(), String> {
+    fire_screen_off(state, lock, &trigger);
+    Ok(())
+}
+
+/// 执行熄屏（与 trigger_screenoff 命令同逻辑）：先 screen_off，再异步写 off.log / debug.log。
+/// 供命令与后端定时调度器复用。
+pub(crate) fn fire_screen_off(state: tauri::State<AppState>, lock: bool, trigger: &str) {
     // 先执行熄屏（已用 SendMessageTimeoutW 防止广播被挂起窗口阻塞）；
     // 日志改为异步发送，绝不因写盘失败而阻塞或 panic 主流程。
-    platform::screen_off(lock)?;
+    let _ = platform::screen_off(lock);
     let ts = chrono::Local::now()
         .format("%Y-%m-%d %H:%M:%S")
         .to_string();
     // off.log 记录中文原因
-    let _ = state.off_log.send(serde_json::json!({"time":ts,"trigger":trigger.clone(),"reason":reason_cn(&trigger),"lock":lock}).to_string());
+    let _ = state.off_log.send(serde_json::json!({"time":ts,"trigger":trigger,"reason":reason_cn(trigger),"lock":lock}).to_string());
     let _ = state
         .debug_log
         .send(fmt_log("INFO", "screenoff", &format!("screen off triggered by {}", trigger)));
-    Ok(())
 }
 
 #[tauri::command]
@@ -123,9 +164,21 @@ fn read_logs() -> Vec<serde_json::Value> {
     models::read_logs()
 }
 
+/// 运行日志（sleeptimer.log，含级别/组件/消息），时间倒序。
 #[tauri::command]
-fn clear_logs() -> Result<(), String> {
-    models::clear_logs()
+fn read_run_logs() -> Vec<serde_json::Value> {
+    models::read_run_logs()
+}
+
+/// 用户操作审计日志（operation.log），时间倒序。
+#[tauri::command]
+fn read_op_logs() -> Vec<serde_json::Value> {
+    models::read_op_logs()
+}
+
+#[tauri::command]
+fn clear_logs(kind: String) -> Result<(), String> {
+    models::clear_logs(&kind)
 }
 
 #[tauri::command]
@@ -133,7 +186,10 @@ fn reset_all(state: tauri::State<AppState>) -> Result<(), String> {
     let cfg = AppConfig::new();
     models::save_config(&cfg)?;
     *state.config.lock().unwrap() = cfg;
-    models::clear_logs()
+    // 重置时清空全部三类日志
+    let _ = models::clear_logs("screenoff");
+    let _ = models::clear_logs("operation");
+    models::clear_logs("sleeptimer")
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -148,17 +204,50 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // 左键点击：直接弹出程序界面；右键由菜单处理
-            if let tauri::tray::TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                ..
-            } = event
-            {
-                if let Some(w) = tray.app_handle().get_webview_window("main") {
-                    let _ = w.show();
+            // 左键单击/双击（不限按下/抬起状态）：弹出并聚焦主窗口。
+            // 兼容不同 Windows 版本下事件派发差异（Click 仅 Down / Down+Up / DoubleClick），
+            // 重复 show 无副作用；每次点击写入运行日志，便于用户反馈时排查。
+            let show_main = |app: &tauri::AppHandle| {
+                if let Some(w) = app.get_webview_window("main") {
+                    // 关键：主窗口被 hide() 后，部分 WebView2 环境 show() 偶发不生效。
+                    // 用「临时置顶 + 恢复」强制把窗口拉到最前，确保点击图标一定弹出可见窗口。
+                    let _ = w.set_always_on_top(true);
                     let _ = w.unminimize();
+                    let _ = w.show();
                     let _ = w.set_focus();
+                    // 短暂延迟后取消置顶，避免影响用户后续操作
+                    let app2 = app.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        if let Some(w2) = app2.get_webview_window("main") {
+                            let _ = w2.set_always_on_top(false);
+                        }
+                    });
+                    let _ = app
+                        .state::<AppState>()
+                        .debug_log
+                        .send(fmt_log("INFO", "tray", "托盘/任务栏图标点击 → 显示主窗口"));
+                } else {
+                    // 主窗口已被销毁（minimize_to_tray=false 时关闭会真销毁）→ 无法恢复
+                    let _ = app
+                        .state::<AppState>()
+                        .debug_log
+                        .send(fmt_log("WARN", "tray", "主窗口不存在（已被销毁），无法弹出"));
                 }
+            };
+            match event {
+                // ★ 只响应"抬起"：Windows 托盘单击会派发 Down + Up 两次 Click 事件，
+                //   不区分状态会重复记录日志/重复 show（2026-09-30 运行日志实测）。
+                tauri::tray::TrayIconEvent::Click {
+                    button: tauri::tray::MouseButton::Left,
+                    button_state: tauri::tray::MouseButtonState::Up,
+                    ..
+                }
+                | tauri::tray::TrayIconEvent::DoubleClick {
+                    button: tauri::tray::MouseButton::Left,
+                    ..
+                } => show_main(tray.app_handle()),
+                _ => {}
             }
         })
         .build(app)?;
@@ -167,15 +256,22 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 
 /// 预创建（或获取已有的）隐藏倒计时弹窗池窗口。
 /// 窗口加载 countdown.html，默认隐藏。show 时通过事件接收运行时参数。
-fn ensure_countdown_pool(app: &tauri::AppHandle) -> Result<(), String> {
+/// ★ theme：注入 initialization_script，在页面加载最早期设置 <html data-theme>，
+///   彻底消除「第一次弹出先闪默认暗色」的时序闪烁（不依赖事件/轮询兜底）。
+fn ensure_countdown_pool(app: &tauri::AppHandle, theme: &str) -> Result<(), String> {
     if app.get_webview_window("countdown-pool").is_some() {
         return Ok(()); // 已存在
     }
+    let init = format!(
+        "document.documentElement.setAttribute('data-theme', '{}');",
+        theme
+    );
     let _ = tauri::webview::WebviewWindowBuilder::new(
         app,
         "countdown-pool",
         tauri::WebviewUrl::App("countdown.html".into()),
     )
+    .initialization_script(&init)
     .title("SleepTimer Countdown")
     .inner_size(300.0, 96.0)
     .decorations(false)
@@ -190,6 +286,20 @@ fn ensure_countdown_pool(app: &tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn create_countdown_window(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    seconds: u32,
+    lock: bool,
+    trigger: String,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    start_countdown(app, state, seconds, lock, trigger, x, y)
+}
+
+/// 复用弹窗池窗口启动一次倒计时（权威熄屏逻辑在后台线程）。
+/// 供「一键熄屏」命令与后端定时调度器复用。
+pub(crate) fn start_countdown(
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
     seconds: u32,
@@ -232,8 +342,14 @@ fn create_countdown_window(
     params["id"] = serde_json::json!(seq);
     *state.pending_countdown.lock().unwrap() = Some(params.clone());
 
-    // 获取或创建弹窗池
-    ensure_countdown_pool(&app)?;
+    // 获取或创建弹窗池（注入当前主题，页面加载最早期即设置 data-theme）
+    ensure_countdown_pool(&app, theme)?;
+
+    // ★ show 之前先广播当前主题：弹窗池窗口常驻复用，DOM 上残留上一次的 data-theme。
+    //   若先 show 再发事件，会先闪现上一次的旧主题（先旧后新）。这里 show 前同步，
+    //   使窗口一显示即正确主题；即便事件先于页面脚本就绪而漏达，弹窗页启动时也会
+    //   主动 get_config 拉取当前主题兜底。
+    let _ = app.emit("theme:changed", serde_json::json!({ "theme": theme }));
 
     // 先定位、显示、聚焦弹窗；再 emit 事件。
     // 顺序很关键：隐藏窗口在首次显示前可能尚未执行页面脚本，
@@ -308,9 +424,20 @@ fn cancel_countdown(app: tauri::AppHandle, state: tauri::State<AppState>) {
 }
 
 /// 返回当前待执行的倒计时参数（供弹窗页面兜底拉取）。无则返回 null。
+/// ★ 返回前用「当前实时主题」覆盖 pending 里固化在倒计时启动时的 theme：
+///   弹窗页轮询兜底每 150ms 调用本命令，若 theme 仍是旧值，会在显示期间反复
+///   用旧主题覆盖用户刚切换的新主题。这里保证轮询拿到的 theme 永远是最新的。
 #[tauri::command]
 fn get_countdown_state(state: tauri::State<AppState>) -> Option<serde_json::Value> {
-    state.pending_countdown.lock().unwrap().clone()
+    let mut v = state.pending_countdown.lock().unwrap().clone()?;
+    let theme = {
+        let t = state.config.lock().unwrap().settings.theme.clone();
+        if t == "light" { "light" } else { "dark" }
+    };
+    if let serde_json::Value::Object(ref mut m) = v {
+        m.insert("theme".to_string(), serde_json::json!(theme));
+    }
+    Some(v)
 }
 
 /// 关闭所有倒计时子窗口（label 以 "countdown-" 开头），用于取消/退出时清理
@@ -332,15 +459,22 @@ fn close_countdown_windows(app: tauri::AppHandle, state: tauri::State<AppState>)
 /// 预创建（或获取已有的）隐藏通知弹窗池窗口。
 /// 窗口加载 notify.html，默认隐藏、透明背景（卡片外区域透明，仅浮卡可见）。
 /// show 时通过事件接收运行时参数（标题/多行内容/类型/主题/时长）。
-fn ensure_notify_pool(app: &tauri::AppHandle) -> Result<(), String> {
+/// ★ theme：注入 initialization_script，在页面加载最早期设置 <html data-theme>，
+///   消除「第一次弹出先闪默认暗色」的时序闪烁。
+fn ensure_notify_pool(app: &tauri::AppHandle, theme: &str) -> Result<(), String> {
     if app.get_webview_window("notify-pool").is_some() {
         return Ok(()); // 已存在
     }
+    let init = format!(
+        "document.documentElement.setAttribute('data-theme', '{}');",
+        theme
+    );
     let _ = tauri::webview::WebviewWindowBuilder::new(
         app,
         "notify-pool",
         tauri::WebviewUrl::App("notify.html".into()),
     )
+    .initialization_script(&init)
     .title("SleepTimer Notify")
     .inner_size(360.0, 190.0)
     .decorations(false)
@@ -396,7 +530,10 @@ fn create_notify_window(
         &format!("显示通知 seq={} title={} kind={} duration={} pos=({},{})", seq, title, kind, duration_ms, x, y),
     ));
 
-    ensure_notify_pool(&app)?;
+    ensure_notify_pool(&app, theme)?;
+
+    // ★ show 之前先广播当前主题：通知池窗口常驻复用，避免先闪现上一次旧主题再切换。
+    let _ = app.emit("theme:changed", serde_json::json!({ "theme": theme }));
 
     // 定位并 show（不抢焦点：通知是被动提示，不应打断用户当前操作）
     if let Some(win) = app.get_webview_window("notify-pool") {
@@ -418,9 +555,19 @@ fn cancel_notify(app: tauri::AppHandle, state: tauri::State<AppState>) {
 }
 
 /// 返回当前待执行的通知参数（供弹窗页面兜底拉取）。无则返回 null。
+/// ★ 返回前用「当前实时主题」覆盖 pending 里固化在通知创建时的 theme，
+///   保证轮询兜底拿到的 theme 永远最新，不会覆盖用户刚切换的主题。
 #[tauri::command]
 fn get_notify_state(state: tauri::State<AppState>) -> Option<serde_json::Value> {
-    state.pending_notify.lock().unwrap().clone()
+    let mut v = state.pending_notify.lock().unwrap().clone()?;
+    let theme = {
+        let t = state.config.lock().unwrap().settings.theme.clone();
+        if t == "light" { "light" } else { "dark" }
+    };
+    if let serde_json::Value::Object(ref mut m) = v {
+        m.insert("theme".to_string(), serde_json::json!(theme));
+    }
+    Some(v)
 }
 
 /// 检测更新：向 GitHub Releases "最新发布" 接口发起只读 GET，返回发布信息。
@@ -591,17 +738,21 @@ pub fn run() {
         config.version = expected_version.clone();
         let _ = models::save_config(&config);
     }
-    // 日志通道（行业规范命名：sleeptimer = 主日志, screenoff = 熄屏事件日志）
+    // 日志通道（行业规范命名：sleeptimer = 运行日志, screenoff = 熄屏事件日志, operation = 用户操作审计日志）
     let off_tx = spawn_logger(log_dir.clone(), "screenoff");
     let debug_tx = spawn_logger(log_dir.clone(), "sleeptimer");
+    let op_tx = spawn_logger(log_dir.clone(), "operation");
     let state = AppState {
         config: Mutex::new(config),
         off_log: off_tx,
         debug_log: debug_tx,
+        op_log: op_tx,
         pending_countdown: Mutex::new(None),
         countdown_seq: Mutex::new(0),
         pending_notify: Mutex::new(None),
         notify_seq: Mutex::new(0),
+        scheduler_fired: Mutex::new(std::collections::HashSet::new()),
+        scheduler_day: Mutex::new(String::new()),
     };
 
     let app = tauri::Builder::default()
@@ -626,10 +777,13 @@ pub fn run() {
             save_config,
             set_config_path,
             log,
+            log_operation,
             trigger_screenoff,
             set_autostart,
             pick_folder,
             read_logs,
+            read_run_logs,
+            read_op_logs,
             clear_logs,
             reset_all,
             create_countdown_window,
@@ -657,7 +811,12 @@ pub fn run() {
             // ★ 预创建倒计时弹窗池（隐藏窗口），消除每次新建窗口的 WebView2 启动延迟（~1s空白）。
             //   窗口加载轻量 countdown.html，首次显示时通过 Tauri 事件接收运行时参数（含当前主题），
             //   实现"弹出即显示完整内容、主题与主程序同步"。
-            if let Err(e) = ensure_countdown_pool(&app.app_handle()) {
+            //   ★ 预创建时注入当前主题到 initialization_script，页面加载即带正确 data-theme。
+            let boot_theme = {
+                let t = app.state::<AppState>().config.lock().unwrap().settings.theme.clone();
+                if t == "light" { "light".to_string() } else { "dark".to_string() }
+            };
+            if let Err(e) = ensure_countdown_pool(&app.app_handle(), &boot_theme) {
                 let _ = app.state::<AppState>().debug_log.send(fmt_log(
                     "WARN",
                     "countdown",
@@ -665,13 +824,15 @@ pub fn run() {
                 ));
             }
             // ★ 预创建通知弹窗池（隐藏窗口），实现火绒风格桌面通知浮窗（启动提示/通用提示）。
-            if let Err(e) = ensure_notify_pool(&app.app_handle()) {
+            if let Err(e) = ensure_notify_pool(&app.app_handle(), &boot_theme) {
                 let _ = app.state::<AppState>().debug_log.send(fmt_log(
                     "WARN",
                     "notify",
                     &format!("通知弹窗池预创建失败（将按需降级新建）: {}", e),
                 ));
             }
+            // ★ 启动后端定时调度线程（治本修复：不再依赖前端隐藏 WebView 的节流定时器）
+            scheduler::start_scheduler(app.app_handle().clone());
             // ★ 安装全局 ESC 钩子：倒计时激活期间，无论弹窗是否聚焦，按 ESC 均可取消。
             //   （弹窗是独立 WebviewWindow，失去焦点后窗口自身的 keydown 收不到 ESC，
             //    故需在 Rust 端用低级键盘钩子全局捕获。）
@@ -732,10 +893,20 @@ pub fn run() {
                     .settings
                     .minimize_to_tray;
                 if minimize {
+                    // 关闭 → 隐藏到托盘（窗口仍存在，托盘图标可恢复）
                     api.prevent_close();
                     if let Some(w) = app_handle.get_webview_window("main") {
                         let _ = w.hide();
                     }
+                    let _ = app_handle.state::<AppState>().debug_log.send(fmt_log(
+                        "INFO", "app", "关闭主窗口 → 最小化到托盘（窗口隐藏，可点托盘图标恢复）",
+                    ));
+                } else {
+                    // 关闭 → 真正退出（窗口销毁，托盘一并退出，避免残留点不开的僵尸图标）
+                    let _ = app_handle.state::<AppState>().debug_log.send(fmt_log(
+                        "INFO", "app", "关闭主窗口 → 退出程序（minimize_to_tray=false）",
+                    ));
+                    app_handle.exit(0);
                 }
             }
         }

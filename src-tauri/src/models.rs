@@ -235,7 +235,6 @@ pub fn read_logs() -> Vec<serde_json::Value> {
     }
     files.sort();
     let mut entries = Vec::new();
-    let mut idx = 0;
     for f in files {
         if let Ok(content) = fs::read_to_string(&f) {
             for line in content.lines() {
@@ -245,26 +244,133 @@ pub fn read_logs() -> Vec<serde_json::Value> {
                 }
                 // JSON Lines：每行是一个 JSON 对象 {"time":"...","trigger":"...","reason":"...","lock":bool}
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                    idx += 1;
-                    let mut entry = val.clone();
-                    entry["id"] = serde_json::json!(idx);
-                    entries.push(entry);
+                    entries.push(val);
                 }
             }
         }
     }
+    finalize_desc(entries)
+}
+
+/// 读取运行日志（sleeptimer.log / sleeptimer.N.log 滚动归档），按时间倒序（最新在前）。
+/// 行格式：[2026-07-17 09:23:08.123] [INFO ] [component] message
+pub fn read_run_logs() -> Vec<serde_json::Value> {
+    let dirs = candidate_log_dirs();
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for dir in &dirs {
+        if let Ok(read) = fs::read_dir(dir) {
+            for e in read.filter_map(|e| e.ok()) {
+                let p = e.path();
+                if let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) {
+                    // 匹配：sleeptimer.log（活跃）/ sleeptimer.N.log（滚动归档）
+                    if name.starts_with("sleeptimer") && name.ends_with(".log") && seen.insert(name) {
+                        files.push(p);
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    let mut entries = Vec::new();
+    for f in files {
+        if let Ok(content) = fs::read_to_string(&f) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() || !line.starts_with('[') {
+                    continue;
+                }
+                if let Some(e) = parse_run_log_line(line) {
+                    entries.push(e);
+                }
+            }
+        }
+    }
+    finalize_desc(entries)
+}
+
+/// 读取用户操作审计日志（operation.log / operation.N.log），时间倒序。
+/// 行格式（JSON Lines）：{"time":"...","action":"...","detail":"..."}
+pub fn read_op_logs() -> Vec<serde_json::Value> {
+    let dirs = candidate_log_dirs();
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for dir in &dirs {
+        if let Ok(read) = fs::read_dir(dir) {
+            for e in read.filter_map(|e| e.ok()) {
+                let p = e.path();
+                if let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) {
+                    if name.starts_with("operation") && name.ends_with(".log") && seen.insert(name) {
+                        files.push(p);
+                    }
+                }
+            }
+        }
+    }
+    files.sort();
+    let mut entries = Vec::new();
+    for f in files {
+        if let Ok(content) = fs::read_to_string(&f) {
+            for line in content.lines() {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+                    entries.push(val);
+                }
+            }
+        }
+    }
+    finalize_desc(entries)
+}
+
+/// 倒序收尾：最新在前（跨文件按文件名升序写入后整体反转），并重排序号 1..N。
+fn finalize_desc(mut entries: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    entries.reverse();
+    for (i, e) in entries.iter_mut().enumerate() {
+        e["id"] = serde_json::json!((i + 1) as u64);
+    }
     entries
 }
 
-/// Remove every screen-off log file (current + archived) from all candidate dirs.
-pub fn clear_logs() -> Result<(), String> {
+/// 解析一行运行日志：[时间] [级别] [组件] 消息
+fn parse_run_log_line(line: &str) -> Option<serde_json::Value> {
+    let close1 = line.find(']')?;
+    let time = line[1..close1].trim().to_string();
+    let rest = line[close1 + 1..].trim_start();
+    let rest = rest.strip_prefix('[')?;
+    let close2 = rest.find(']')?;
+    let level = rest[..close2].trim().to_string();
+    let rest2 = rest[close2 + 1..].trim_start();
+    let rest2 = rest2.strip_prefix('[')?;
+    let close3 = rest2.find(']')?;
+    let component = rest2[..close3].trim().to_string();
+    let message = rest2[close3 + 1..].trim().to_string();
+    Some(serde_json::json!({
+        "time": time,
+        "level": level,
+        "component": component,
+        "message": message,
+    }))
+}
+
+/// 按类型清空日志：kind ∈ "screenoff"（熄屏）/ "operation"（操作）/ "sleeptimer"（运行）。
+/// 删除对应前缀的所有日志文件（活跃 + 滚动归档），跨候选目录。
+pub fn clear_logs(kind: &str) -> Result<(), String> {
+    let prefix = match kind {
+        "screenoff" => "screenoff",
+        "operation" => "operation",
+        "sleeptimer" => "sleeptimer",
+        _ => return Err(format!("未知日志类型: {}", kind)),
+    };
     for dir in candidate_log_dirs() {
         if let Ok(read) = fs::read_dir(&dir) {
             for e in read.filter_map(|e| e.ok()) {
                 let p = e.path();
                 if let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) {
-                    // 删除所有熄屏日志：screenoff.log / screenoff.N.log / 旧 screenoff-*.log
-                    if name.starts_with("screenoff") && name.ends_with(".log") {
+                    // 删除对应前缀的所有日志：<prefix>.log / <prefix>.N.log / 旧 <prefix>-*.log
+                    if name.starts_with(prefix) && name.ends_with(".log") {
                         fs::remove_file(&p).ok();
                     }
                 }

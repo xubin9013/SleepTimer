@@ -106,6 +106,8 @@ function start(p: CdParams) {
   total = seconds;
   shownSeq = id;
 
+  // ★ 弹出时应用主题：cd:show / 轮询兜底返回的 theme 已由 Rust 端保证为「当前实时主题」
+  //   （get_countdown_state 返回前用 state.config 的实时值覆盖），不会再覆盖用户刚切换的主题。
   applyTheme(p.theme || "dark");
 
   const reasons: Record<string, string> = {
@@ -153,6 +155,21 @@ listen("cd:show", (event: any) => {
   start(p);
 }).catch(() => {});
 
+// ★ 主题实时同步：主程序切换主题时广播 theme:changed，弹窗立即跟随（消除切换滞后）。
+//   弹窗池常驻复用，切主题后即便弹窗正显示也能即时刷新，无需等下一次倒计时。
+listen("theme:changed", (event: any) => {
+  const t = event?.payload?.theme;
+  if (t) applyTheme(t);
+}).catch(() => {});
+
+// ★ 启动时主动拉取一次当前主题：弹窗池窗口预创建并隐藏，页面加载时尚未收到任何事件，
+//   若不主动同步，亮色主题下首次弹出会先闪一下默认暗色。此处在脚本加载时校正初始主题。
+invoke("get_config")
+  .then((cfg: any) => {
+    if (cfg?.settings?.theme) applyTheme(cfg.settings.theme);
+  })
+  .catch(() => {});
+
 // ★ 全局 ESC 兜底取消：Rust 端低级键盘钩子捕获的 ESC 会发此事件，
 //   即使弹窗处于非聚焦状态也能取消，解决"失去焦点后 ESC 失效"的问题。
 listen("cd:cancel", () => {
@@ -174,6 +191,11 @@ listen("cd:finished", () => {
 //   不以 ended 门控——只要 pending.id 与当前 shownSeq 不同，就启动新的倒计时。
 //   这是修复"第一次有、第二次起没有"的关键：之前轮询被 ended 门控，
 //   第一轮结束后 ended 恒为 true，第二轮再也无法经轮询兜底启动。
+//
+//   ★ 主题同步：无论 id 是否变化，每次都无条件用返回的实时 theme 调 applyTheme。
+//     get_countdown_state 在 Rust 端已用 state.config 的实时主题覆盖 pending 里的旧值，
+//     因此轮询能持续把最新主题应用到弹窗——彻底消除「弹出中切主题不跟随」，
+//     且不依赖 theme:changed 事件能否送达（隐藏/复用窗口的事件送达时序不可靠）。
 window.setInterval(async () => {
   let visible = true;
   try {
@@ -185,6 +207,8 @@ window.setInterval(async () => {
   invoke("get_countdown_state")
     .then((state: any) => {
       if (!state || typeof state.seconds !== "number") return;
+      // ★ 无条件同步主题（实时值）
+      if (typeof state.theme === "string") applyTheme(state.theme);
       const id = typeof state.id === "number" ? state.id : -1;
       if (id !== shownSeq) {
         start(state as CdParams);

@@ -43,6 +43,8 @@ function hideSelf() {
 }
 
 function render(p: NotifyParams) {
+  // ★ 弹出时应用主题：notify:show / 轮询兜底返回的 theme 已由 Rust 端保证为「当前实时主题」
+  //   （get_notify_state 返回前用 state.config 的实时值覆盖），不会再覆盖用户刚切换的主题。
   applyTheme(p.theme || "dark");
   const kind = p.kind || "info";
   iconEl.className = "nt-icon " + kind;
@@ -67,6 +69,19 @@ function render(p: NotifyParams) {
 // 关闭按钮：立即隐藏
 closeEl.addEventListener("click", () => hideSelf());
 
+// ★ 主题实时同步：主程序切换主题时广播 theme:changed，通知浮窗立即跟随（消除切换滞后）。
+listen("theme:changed", (event: any) => {
+  const t = event?.payload?.theme;
+  if (t) applyTheme(t);
+}).catch(() => {});
+
+// ★ 启动时主动拉取一次当前主题：通知池窗口预创建并隐藏，避免亮色主题下首次弹出闪暗色。
+invoke("get_config")
+  .then((cfg: any) => {
+    if (cfg?.settings?.theme) applyTheme(cfg.settings.theme);
+  })
+  .catch(() => {});
+
 // ★ 核心：监听 Rust 端 notify:show 事件，接收运行时参数并渲染。
 listen("notify:show", (event: any) => {
   const p = (event.payload || {}) as NotifyParams;
@@ -76,6 +91,10 @@ listen("notify:show", (event: any) => {
 
 // ★ 兜底轮询（可靠引擎）：窗口可见时每 200ms 主动拉取当前待执行通知。
 //   若事件因窗口首次显示脚本未就绪而错过，也能经轮询兜底显示/更新。
+//
+//   ★ 主题同步：无论 id 是否变化，每次都无条件用返回的实时 theme 调 applyTheme。
+//     get_notify_state 在 Rust 端已用 state.config 的实时主题覆盖 pending 里的旧值，
+//     轮询持续把最新主题应用到通知浮窗，消除「显示中切主题不跟随」。
 window.setInterval(async () => {
   let visible = true;
   try {
@@ -87,6 +106,8 @@ window.setInterval(async () => {
   invoke("get_notify_state")
     .then((state: any) => {
       if (!state || typeof state.id !== "number") return;
+      // ★ 无条件同步主题（实时值）
+      if (typeof state.theme === "string") applyTheme(state.theme);
       if (state.id !== shownSeq) {
         shownSeq = state.id;
         render(state as NotifyParams);

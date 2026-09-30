@@ -155,7 +155,7 @@ button { font-family: inherit; }
 .titlebar .drag { flex: 1; height: 100%; }
 .titlebar .app-icon { width: 32px; height: 32px; border-radius: var(--radius-sm); }
 .titlebar .app-name { font-size: var(--text-lg); font-weight: 600; color: var(--gray-900); }
-.titlebar .app-version { font-size: var(--text-xs); color: var(--gray-400); margin-left: 2px; cursor: pointer; transition: color 120ms ease; position: relative; }
+.titlebar .app-version { font-size: var(--text-xs); color: var(--gray-400); margin-left: 2px; cursor: pointer; position: relative; }
 .titlebar .app-version:hover { color: var(--primary-500); text-decoration: underline dotted; }
 /* 版本号红点：有新版本时点亮，提醒用户（不依赖弹窗） */
 .titlebar .app-version.has-update { color: var(--danger-600); }
@@ -177,7 +177,6 @@ button { font-family: inherit; }
   font-size: var(--text-sm); font-weight: 500; cursor: pointer;
   background: var(--primary-50); color: var(--primary-700);
   border: 1px solid var(--primary-200);
-  transition: background 150ms ease;
 }
 .pill:hover { background: var(--primary-100); }
 .pill.none { background: var(--gray-100); color: var(--gray-400); border-color: var(--border-color); cursor: default; }
@@ -188,7 +187,6 @@ button { font-family: inherit; }
   width: 32px; height: 32px; border-radius: var(--radius-full);
   display: inline-flex; align-items: center; justify-content: center;
   background: transparent; border: none; color: var(--gray-700); cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
 }
 .icon-btn:hover { background: var(--bg-hover); }
 .icon-btn:active { background: var(--gray-200); }
@@ -199,7 +197,6 @@ button { font-family: inherit; }
   height: 32px; padding: 0 14px; border-radius: var(--radius-md);
   background: var(--danger-500); color: #fff; border: none; cursor: pointer;
   font-size: var(--text-sm); font-weight: 500;
-  transition: background 150ms ease;
 }
 .btn-off:hover { background: var(--danger-600); }
 .btn-off:active { transform: translateY(1px); }
@@ -221,7 +218,6 @@ button { font-family: inherit; }
   color: var(--gray-700); border-radius: var(--radius-md);
   border-left: 3px solid transparent;
   font-size: var(--text-base); position: relative;
-  transition: background 150ms ease;
 }
 .nav-item svg { width: 20px; height: 20px; flex-shrink: 0; }
 .nav-item:hover { background: var(--bg-hover); }
@@ -271,7 +267,7 @@ button { font-family: inherit; }
   display: inline-flex; align-items: center; gap: 6px; justify-content: center;
   height: 38px; padding: 0 16px; border-radius: var(--radius-md);
   font-size: var(--text-sm); font-weight: 500; cursor: pointer; border: 1px solid transparent;
-  transition: background 150ms ease, transform 100ms ease, border-color 150ms ease;
+  transition: transform 100ms ease;
 }
 .btn svg { width: 16px; height: 16px; }
 .btn-primary { background: var(--primary-500); color: #fff; }
@@ -321,7 +317,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .toggle input { opacity: 0; width: 0; height: 0; }
 .toggle .track {
   position: absolute; inset: 0; border-radius: var(--radius-full);
-  background: var(--gray-300); transition: background 150ms ease;
+  background: var(--gray-300);
 }
 [data-theme="dark"] .toggle .track { background: #3A3E4D; }
 .toggle .thumb {
@@ -342,7 +338,6 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   height: 32px; padding: 0 6px 0 12px; border-radius: var(--radius-full);
   background: var(--bg-card); border: 1px solid var(--border-color);
   color: var(--gray-700); cursor: pointer; font-size: var(--text-sm);
-  transition: border-color 150ms ease, background 150ms ease;
 }
 .plan-tab:hover { border-color: var(--primary-400); background: var(--primary-50); }
 [data-theme="dark"] .plan-tab:hover { background: var(--primary-50); }
@@ -372,7 +367,6 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   border-radius: var(--radius-full); background: var(--bg-card);
   border: 1px solid var(--border-color); color: var(--gray-700);
   cursor: pointer; font-size: var(--text-sm); white-space: nowrap;
-  transition: border-color 150ms ease, background 150ms ease;
 }
 .plan-chip:hover { border-color: var(--primary-400); background: var(--primary-50); }
 [data-theme="dark"] .plan-chip:hover { background: var(--primary-50); }
@@ -398,6 +392,14 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 [data-theme="dark"] .time-pill { background: #1E2029; color: #fff; }
 .time-pill .pill-x { width: 14px; height: 14px; color: var(--gray-500); display: inline-flex; }
 .time-pill .pill-x:hover { color: var(--danger-500); }
+/* 时间标签行末尾的圆圈 + 号（添加时间），样式同 plan-tab-add，尺寸对齐时间标签 */
+.time-pill-add {
+  width: 32px; height: 32px; border-radius: var(--radius-full);
+  border: 1px dashed var(--border-color); background: transparent; color: var(--gray-500);
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  align-self: center; flex-shrink: 0;
+}
+.time-pill-add:hover { border-color: var(--primary-400); color: var(--primary-500); }
 
 /* ---------- Empty state ---------- */
 .empty {
@@ -405,8 +407,10 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   text-align: center; padding: var(--space-12) var(--space-6); color: var(--gray-400);
 }
 .empty svg { width: 48px; height: 48px; margin-bottom: var(--space-3); }
+/* 空状态内的操作按钮：图标恢复按钮标准尺寸（覆盖上方 .empty svg 的 48px 大图标规则） */
+.empty .btn svg { width: 16px; height: 16px; margin-bottom: 0; }
 .empty .empty-title { font-size: var(--text-lg); font-weight: 500; color: var(--gray-900); }
-[data-theme="dark"] .empty .empty-title { color: var(--gray-100); }
+[data-theme="dark"] .empty .empty-title { color: var(--gray-900); }
 .empty .empty-desc { font-size: var(--text-sm); color: var(--gray-500); margin-top: var(--space-1); }
 
 /* ---------- Badges ---------- */
@@ -415,6 +419,12 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .badge-timer { color: var(--primary-700); background: var(--primary-100); }
 [data-theme="dark"] .badge-timer { color: var(--primary-400); }
 .badge-today { background: var(--primary-500); color: #fff; }
+/* 运行日志级别徽章 */
+.badge-debug { color: var(--gray-500); background: var(--gray-100); }
+[data-theme="dark"] .badge-debug { color: var(--gray-700); background: #1E2029; }
+.badge-error { color: var(--danger-500); background: rgba(239, 68, 68, 0.12); }
+/* 运行日志内容列：长消息换行 */
+.log-msg { word-break: break-all; }
 
 /* ---------- Table ---------- */
 .table { width: 100%; border-collapse: collapse; }
@@ -422,7 +432,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   text-align: left; font-size: var(--text-sm); color: var(--gray-500); font-weight: 500;
   padding: 0 12px; height: 40px;
 }
-.table tbody tr { height: 48px; border-radius: var(--radius-md); transition: background 150ms ease; }
+.table tbody tr { height: 48px; border-radius: var(--radius-md); }
 .table tbody tr:hover { background: var(--bg-hover); }
 .table tbody td { padding: 0 12px; font-size: var(--text-base); color: var(--gray-700); border-top: 1px solid var(--border-color); }
 .table tbody td.mono { font-family: var(--font-family-mono); color: var(--gray-900); }
@@ -497,7 +507,8 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   border-radius: var(--radius-sm, 8px); color: var(--gray-600);
   font-size: var(--text-xs); line-height: 1.6; white-space: pre-wrap; word-break: break-word;
 }
-[data-theme="dark"] .update-notes { background: rgba(255,255,255,0.04); color: var(--gray-300); }
+/* ★ 暗色主题灰阶已反转：gray-300 是深色背景色，文字须用 gray-700+（浅色） */
+[data-theme="dark"] .update-notes { background: rgba(255,255,255,0.06); color: var(--gray-700); border-color: var(--gray-200); }
 .modal .danger-name { color: var(--danger-500); font-size: var(--text-sm); text-align: center; font-weight: 500; }
 
 /* 更新下载进度条 */
@@ -546,6 +557,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 }
 .cal-cell:hover { background: var(--bg-hover); }
 .cal-cell.muted { color: var(--gray-300); }
+[data-theme="dark"] .cal-cell.muted { color: var(--gray-500); }
 .cal-cell.selected { background: var(--primary-500); color: #fff; }
 /* today/cur 标记已移除到上方按钮，保留类名以防遗漏引用 */
 .cal-cell.today:not(.selected) { border: none; color: var(--gray-700); }
@@ -569,7 +581,6 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 4px; text-align: center;
   background: var(--bg-card);
-  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 .tl-node .tl-date { font-size: var(--text-xs); color: var(--gray-500); line-height: 1.3; }
 .tl-node .tl-plan { font-size: var(--text-sm); font-weight: 600; color: var(--gray-900); line-height: 1.3; }
@@ -600,7 +611,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   border-radius: var(--radius-md); box-shadow: var(--shadow-lg); padding: 10px 14px; font-size: var(--text-sm);
   animation: slidein 160ms ease; max-width: 320px;
 }
-[data-theme="dark"] .toast { color: var(--gray-100); }
+[data-theme="dark"] .toast { color: var(--gray-900); }
 .toast.success { border-left: 3px solid var(--success-500); }
 .toast.error { border-left: 3px solid var(--danger-500); }
 .toast.info { border-left: 3px solid var(--info-500); }
@@ -611,6 +622,12 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+}
+
+/* ★ 主题切换瞬时生效：切换瞬间禁用全部 transition，避免标签/按钮/文本颜色渐变滞后 */
+.theme-switching,
+.theme-switching * {
+  transition: none !important;
 }
 
 /* Field helper row with unit */
@@ -650,7 +667,6 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   border-radius: var(--radius-full); background: transparent;
   border: 1px solid var(--border-color); color: var(--gray-700); cursor: pointer;
   font-size: var(--text-sm); white-space: nowrap;
-  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
 }
 .order-pill:hover { border-color: var(--primary-400); background: var(--primary-50); }
 [data-theme="dark"] .order-pill:hover { background: var(--primary-50); }

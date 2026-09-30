@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 
 export interface Plan {
   name: string;
@@ -47,7 +48,11 @@ export const api = {
   setAutostart: (enabled: boolean) => invoke("set_autostart", { enabled }),
   pickFolder: () => invoke<string | null>("pick_folder"),
   readLogs: () => invoke<LogRow[]>("read_logs"),
-  clearLogs: () => invoke("clear_logs"),
+  readRunLogs: () => invoke<RunLogRow[]>("read_run_logs"),
+  readOpLogs: () => invoke<OpLogRow[]>("read_op_logs"),
+  clearLogs: (kind: "screenoff" | "operation" | "sleeptimer") => invoke("clear_logs", { kind }),
+  /** 记录一条用户操作审计日志（action 操作类型 / detail 详情） */
+  logOperation: (action: string, detail: string) => invoke("log_operation", { action, detail }),
   resetAll: () => invoke("reset_all"),
   /** Rust侧创建倒计时子窗口（最底层方式，通过 initialization_script 注入参数） */
   createCountdownWindow: (seconds: number, lock: boolean, trigger: string, x: number, y: number) =>
@@ -58,9 +63,11 @@ export const api = {
   cancelCountdown: () => invoke("cancel_countdown"),
   /** 拉取当前待执行的倒计时参数（弹窗页面兜底启动用） */
   getCountdownState: () => invoke<any | null>("get_countdown_state"),
-  /** Rust侧创建通知浮窗（火绒风格桌面通知：标题/多行/类型/时长/位置） */
+  /** Rust侧创建通知浮窗（火绒风格桌面通知：标题/多行/类型/时长/位置）
+   *  ★ 参数键必须用 camelCase（durationMs）：Tauri 2 会把 Rust snake_case 参数名转为 camelCase 匹配，
+   *    传 duration_ms 会报 missing required key durationMs，通知永远弹不出（2026-09-30 实测修复）。 */
   createNotifyWindow: (title: string, lines: string[], kind: string, duration_ms: number, x: number, y: number) =>
-    invoke("create_notify_window", { title, lines, kind, duration_ms, x, y }),
+    invoke("create_notify_window", { title, lines, kind, durationMs: duration_ms, x, y }),
   /** 取消当前通知：隐藏 notify-pool 窗口并清除待执行状态（不销毁窗口，便于复用） */
   cancelNotify: () => invoke("cancel_notify"),
   /** 拉取当前待执行的通知参数（通知页面兜底启动用） */
@@ -71,10 +78,27 @@ export const api = {
   downloadAndInstall: (url: string) => invoke("download_and_install", { url }),
   /** 在系统默认浏览器打开外部链接（前往下载等） */
   openUrl: (url: string) => invoke("open_url", { url }),
+  /** 主题切换后广播给所有子窗口（倒计时/通知弹窗池），实现主题实时同步、消除切换滞后 */
+  emitThemeChanged: (theme: string) => emit("theme:changed", { theme }),
 };
 
 export interface LogRow {
   id: number;
   time: string;
   trigger: string; // "manual" | "timer"
+}
+
+export interface RunLogRow {
+  id: number;
+  time: string; // "YYYY-MM-DD HH:MM:SS.mmm"
+  level: string; // DEBUG | INFO | WARN | ERROR
+  component: string; // scheduler / countdown / app ...
+  message: string;
+}
+
+export interface OpLogRow {
+  id: number;
+  time: string; // "YYYY-MM-DD HH:MM:SS"
+  action: string; // 操作类型：新建方案 / 删除方案 / 修改方案 / 一键熄屏 / 清空日志 ...
+  detail: string; // 详情
 }
