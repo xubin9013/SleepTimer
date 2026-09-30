@@ -242,7 +242,23 @@ interface UpdateInfo {
   current: string;
 }
 
-/** 拉取 GitHub 最新发布并比对版本，返回结构化结果（不含 UI 行为）。 */
+/** 按段数值比较版本号：cmpVersion("1.0.20260930.9","1.0.20260930.16") < 0。
+ *  ★ 必须数值比较：纯字符串比较在构建次数跨位数时出错（"9" > "16"）。 */
+function cmpVersion(a: string, b: string): number {
+  const pa = a.split(".").map((s) => parseInt(s, 10) || 0);
+  const pb = b.split(".").map((s) => parseInt(s, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+/** 拉取 GitHub 最新发布并比对版本，返回结构化结果（不含 UI 行为）。
+ *  ★ tag 自 V1.0.20260930.15 起带指纹后缀（与程序内 build.rs 版本一致），
+ *    比较用数值分段：本地 < tag → 可更新；相等 → 已是最新；本地 > tag → 尚未正式发布。 */
 async function fetchUpdateInfo(): Promise<UpdateInfo> {
   const current = store.cfg.version || (window as any).__APP_VERSION__ || "";
   const data = await api.checkUpdate();
@@ -255,8 +271,9 @@ async function fetchUpdateInfo(): Promise<UpdateInfo> {
   const nCur = norm(current);
   const nLat = norm(tag);
   let status: UpdateInfo["status"];
-  if (!tag || nLat === nCur) status = "uptodate";
-  else if (nLat > nCur) status = "update";
+  const cmp = !tag ? 0 : cmpVersion(nLat, nCur);
+  if (!tag || cmp === 0) status = "uptodate";
+  else if (cmp > 0) status = "update";
   else status = "newer";
   // 从发布资源中找出安装包（.exe）的下载地址
   let assetUrl = "";
@@ -309,9 +326,9 @@ function showUpdateModal(info: UpdateInfo) {
   }
   // ★ “关闭”改为“关于”：点击打开当前版本在 GitHub 的发布页
   const normV = (v: string) => String(v || "").trim().toLowerCase().replace(/^v/, "");
-  // 关于页打开发布页：GitHub tag 为「日期级」（不含当天构建次数 .N），需截断后缀避免 404
-  const dateTag = (v: string) => normV(v).split(".").slice(0, 3).join(".");
-  const aboutUrl = "https://github.com/xubin9013/SleepTimer/releases/tag/v" + dateTag(info.current);
+  // ★ tag 自 V1.0.20260930.15 起带指纹后缀，「关于」直跳完整 tag 的发布页
+  //   （此前截断到日期级 v1.0.20260930 会 404，因 tag 已含指纹）
+  const aboutUrl = "https://github.com/xubin9013/SleepTimer/releases/tag/v" + normV(info.current);
   actions.push({
     label: "关于", cls: "btn-secondary",
     onClick: () => { closeModal(); api.openUrl(aboutUrl).catch(() => toast("无法打开链接", "error")); },
